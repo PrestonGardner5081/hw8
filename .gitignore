@@ -1,0 +1,5 @@
+hw[0-9]gardner
+*.o
+ghToken.txt
+/hw7_test
+hw7m[0-9]data.txt
