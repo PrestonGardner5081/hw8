@@ -49,6 +49,7 @@
 #include "pwm_init.h"
 #include "6050Init.h"
 #include "float_queue.h"
+#include "raspicam_wrapper.h"
 
 #define PI 3.14159265358979
 
@@ -157,7 +158,6 @@ void clearDataQueues(struct dataQueue *dq)
     clearFQueue(&(dq->GYRO_Z));
     clearFQueue(&(dq->TIME));
 }
-
 //set all inputs to outputs to turn off lights on quit
 void cleanQuit()
 {
@@ -1377,15 +1377,15 @@ int main(void)
         pthread_create(&scheduleThread, &pAttr, &scheduler, NULL); //create thread for menu handling
         pthread_create(&leftThread, &pAttr, &leftCtrl, NULL);      //create thread for orange blue pwm control
         pthread_create(&rightThread, &pAttr, &rightCtrl, NULL);    //create thread for orange blue pwm control
-        pthread_create(&dataCThread, &pAttr, &dataCollect, NULL);  //create thread data collection
-        pthread_create(&dataAThread, &pAttr, &dataAnalyze, NULL);  //create thread data collection
+        // pthread_create(&dataCThread, &pAttr, &dataCollect, NULL);  //create thread data collection
+        // pthread_create(&dataAThread, &pAttr, &dataAnalyze, NULL);  //create thread data collection
 
         pthread_join(inputThread, NULL);
         pthread_join(scheduleThread, NULL);
         pthread_join(leftThread, NULL);
         pthread_join(rightThread, NULL);
-        pthread_join(dataCThread, NULL);
-        pthread_join(dataAThread, NULL);
+        // pthread_join(dataCThread, NULL);
+        // pthread_join(dataAThread, NULL);
 
         pthread_mutex_destroy(&inputLock);
         pthread_mutex_destroy(&scheduleLock);
