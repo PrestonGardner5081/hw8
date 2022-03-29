@@ -80,6 +80,7 @@ struct io_peripherals *io;
 struct calibration_data calibration_accelerometer;
 struct calibration_data calibration_gyroscope;
 struct calibration_data calibration_magnetometer;
+struct raspicam_wrapper_handle *Camera;
 
 pthread_mutex_t inputLock, leftControlLock, rightControlLock, scheduleLock, pwmLock, printLock, dataCollectLock, fileWriteLock, writeCountsLock; //FIXME PRINTLOCK
 pthread_cond_t willCollectData = PTHREAD_COND_INITIALIZER;
@@ -100,6 +101,7 @@ struct publicState
     int mode; // 0 = m0, 1 = m1, 2 = m2
     int z_count;
     int c_count;
+    bool newPic; //is there a new pic to process?
 } state;
 
 struct dataQueue
@@ -112,6 +114,13 @@ struct dataQueue
     struct fQueue GYRO_Z;
     struct fQueue TIME;
 } dQueues;
+
+struct RGB_pixel
+{
+    unsigned char R;
+    unsigned char G;
+    unsigned char B;
+};
 
 void initDataQueues(struct dataQueue *dq)
 {
@@ -167,6 +176,7 @@ void cleanQuit()
     io->gpio->GPFSEL0.field.FSEL6 = GPFSEL_INPUT; //GPIO06
     io->gpio->GPFSEL2.field.FSEL2 = GPFSEL_INPUT; //GPIO22
     io->gpio->GPFSEL2.field.FSEL3 = GPFSEL_INPUT; //GPIO23
+    raspicam_wrapper_destroy(Camera);
 }
 
 void INThandler(int sig)
@@ -1272,12 +1282,77 @@ void *checkInput()
     pthread_exit(0);
 }
 
+void takePic()
+{
+    raspicam_wrapper_grab(Camera);
+    state.newPic = true;
+}
+
+void dataToPPM(unsigned char *data) //for testing
+{
+    // FILE *outFile = fopen("test1.ppm", "wb");
+    // if (outFile != NULL)
+    // {
+    //     fprintf(outFile, "P6\n"); // write .ppm file header
+    //     fprintf(outFile, "%d %d 255\n", raspicam_wrapper_getWidth(Camera), raspicam_wrapper_getHeight(Camera));
+    //     // write the image data
+    //     fwrite(data, 1, raspicam_wrapper_getImageTypeSize(Camera, RASPICAM_WRAPPER_FORMAT_RGB), outFile);
+    //     fclose(outFile);
+    //     printf("Image, picture saved as test1.ppm\n");
+    // }
+}
+
+void makeGrayscale(unsigned char *data, unsigned int pixel_count)
+{
+    struct RGB_pixel *pixel;
+    unsigned int pixel_index;
+    unsigned char pixel_value;
+
+    pixel = (struct RGB_pixel *)data; // view data as R-byte, G-byte, and B-byte per pixel
+
+    for (pixel_index = 0; pixel_index < pixel_count; pixel_index++)
+    {
+        // gray scale => average of R color, G color, and B color intensity
+        pixel_value = (((unsigned int)(pixel[pixel_index].R)) +
+                       ((unsigned int)(pixel[pixel_index].G)) +
+                       ((unsigned int)(pixel[pixel_index].B))) /
+                      3;                    // do not worry about rounding
+        pixel[pixel_index].R = pixel_value; // same intensity for all three color
+        pixel[pixel_index].G = pixel_value;
+        pixel[pixel_index].B = pixel_value;
+    }
+
+    dataToPPM(data);
+}
+
+void processPic()
+{
+    state.newPic = false;
+
+    size_t image_size = raspicam_wrapper_getImageTypeSize(Camera, RASPICAM_WRAPPER_FORMAT_RGB);
+    unsigned char *data = (unsigned char *)malloc(image_size);
+    raspicam_wrapper_retrieve(Camera, data, RASPICAM_WRAPPER_FORMAT_RGB);
+    unsigned int pixel_count = raspicam_wrapper_getHeight(Camera) * raspicam_wrapper_getWidth(Camera);
+
+    // makeGrayscale(data, pixel_count);
+
+    free(data);
+}
+
 int main(void)
 {
     signal(SIGINT, INThandler);
     signal(SIGALRM, getAccData);
 
     io = import_registers();
+    Camera = raspicam_wrapper_create();
+    if (raspicam_wrapper_open(Camera))
+    {
+        printf("opening camera");
+        sleep(1);
+    }
+    else
+        printf("error opening camera\n");
     init_gyro(io, &calibration_accelerometer, &calibration_gyroscope, &calibration_magnetometer);
 
     if (io != NULL)
@@ -1399,4 +1474,10 @@ int main(void)
 
         cleanQuit(); //turn off all lights and quit
     }
+
+    //reference
+
+    raspicam_wrapper_grab(Camera);
+    state.newPic = true;
+    processPic();
 }
