@@ -10,14 +10,15 @@ SOURCES1=import_registers.c \
 		hw8gardner.c
  
 OBJECTS1=$(patsubst %.c,%.o,$(SOURCES1))
+OBJECTS2=$(patsubst %.cpp,%.o,$(OBJECTS1))
 
 all: hw8gardner 
 
 hw8gardner: $(OBJECTS1)
-	g++ $(OBJECTS1) -o $(TARGET1) -lpthread -lm -lraspicam
+	g++ $(OBJECTS1) -o $(TARGET1) -lpthread -lraspicam
 
 clean:
-	rm -f $(OBJECTS1) $(TARGET1)
+	rm -f $(OBJECTS2) $(TARGET1)
 
 %.o:%.c
 	gcc -o2 -c $< -o $@

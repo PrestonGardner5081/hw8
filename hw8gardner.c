@@ -1290,16 +1290,16 @@ void takePic()
 
 void dataToPPM(unsigned char *data) //for testing
 {
-    // FILE *outFile = fopen("test1.ppm", "wb");
-    // if (outFile != NULL)
-    // {
-    //     fprintf(outFile, "P6\n"); // write .ppm file header
-    //     fprintf(outFile, "%d %d 255\n", raspicam_wrapper_getWidth(Camera), raspicam_wrapper_getHeight(Camera));
-    //     // write the image data
-    //     fwrite(data, 1, raspicam_wrapper_getImageTypeSize(Camera, RASPICAM_WRAPPER_FORMAT_RGB), outFile);
-    //     fclose(outFile);
-    //     printf("Image, picture saved as test1.ppm\n");
-    // }
+    FILE *outFile = fopen("test1.ppm", "wb");
+    if (outFile != NULL)
+    {
+        fprintf(outFile, "P6\n"); // write .ppm file header
+        fprintf(outFile, "%d %d 255\n", raspicam_wrapper_getWidth(Camera), raspicam_wrapper_getHeight(Camera));
+        // write the image data
+        fwrite(data, 1, raspicam_wrapper_getImageTypeSize(Camera, RASPICAM_WRAPPER_FORMAT_RGB), outFile);
+        fclose(outFile);
+        printf("Image, picture saved as test1.ppm\n");
+    }
 }
 
 void makeGrayscale(unsigned char *data, unsigned int pixel_count)
@@ -1321,8 +1321,6 @@ void makeGrayscale(unsigned char *data, unsigned int pixel_count)
         pixel[pixel_index].G = pixel_value;
         pixel[pixel_index].B = pixel_value;
     }
-
-    dataToPPM(data);
 }
 
 void processPic()
@@ -1332,9 +1330,12 @@ void processPic()
     size_t image_size = raspicam_wrapper_getImageTypeSize(Camera, RASPICAM_WRAPPER_FORMAT_RGB);
     unsigned char *data = (unsigned char *)malloc(image_size);
     raspicam_wrapper_retrieve(Camera, data, RASPICAM_WRAPPER_FORMAT_RGB);
-    unsigned int pixel_count = raspicam_wrapper_getHeight(Camera) * raspicam_wrapper_getWidth(Camera);
+    unsigned int pixHeight = raspicam_wrapper_getHeight(Camera);
+    unsigned int pixWidth = raspicam_wrapper_getWidth(Camera);
+    unsigned int pixel_count = pixHeight * pixWidth;
 
-    // makeGrayscale(data, pixel_count);
+    makeGrayscale(data, pixel_count);
+    dataToPPM(data); //FIXME
 
     free(data);
 }
@@ -1346,6 +1347,7 @@ int main(void)
 
     io = import_registers();
     Camera = raspicam_wrapper_create();
+
     if (raspicam_wrapper_open(Camera))
     {
         printf("opening camera");
@@ -1353,6 +1355,7 @@ int main(void)
     }
     else
         printf("error opening camera\n");
+
     init_gyro(io, &calibration_accelerometer, &calibration_gyroscope, &calibration_magnetometer);
 
     if (io != NULL)
@@ -1472,12 +1475,11 @@ int main(void)
         pthread_mutex_destroy(&fileWriteLock);
         pthread_mutex_destroy(&writeCountsLock);
 
+        //reference
+
+        takePic();
+        processPic();
+
         cleanQuit(); //turn off all lights and quit
     }
-
-    //reference
-
-    raspicam_wrapper_grab(Camera);
-    state.newPic = true;
-    processPic();
 }
