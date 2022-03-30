@@ -21,7 +21,7 @@ clean:
 	rm -f $(OBJECTS2) $(TARGET1)
 
 %.o:%.c
-	gcc -o2 -c $< -o $@
+	gcc -g -c $< -o $@
 
 %.o:%.cpp
 	g++ -c $< -o $@

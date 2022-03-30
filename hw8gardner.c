@@ -63,6 +63,8 @@ const int TURN_LOW = PWM_MIN + 2 * PWM_5_PERC;
 const int RAMP_TIME = 15; //us interval to ramp up / down speed
 const int INSTR_QUEUE_SIZE = 1024;
 const int DATA_QUEUE_SIZE = 10000; // about 1.67 minutes of data
+const int IMG_RED_HEIGHT = 60;
+const int IMG_RED_WIDTH = 80;
 const long TURN_TIME = 300000;
 const long Z_C_TURN_TIME = TURN_TIME / 2;
 const long CHECK_IR_INT = TURN_TIME / 100;
@@ -102,6 +104,7 @@ struct publicState
     int z_count;
     int c_count;
     bool newPic; //is there a new pic to process?
+    unsigned char image[80][60];
 } state;
 
 struct dataQueue
@@ -1288,18 +1291,74 @@ void takePic()
     state.newPic = true;
 }
 
-void dataToPPM(unsigned char *data) //for testing
+void dataToPPM(unsigned char *data, char *name, int width, int height, int size) //for testing
 {
-    FILE *outFile = fopen("test1.ppm", "wb");
+    FILE *outFile = fopen(name, "wb");
     if (outFile != NULL)
     {
         fprintf(outFile, "P6\n"); // write .ppm file header
-        fprintf(outFile, "%d %d 255\n", raspicam_wrapper_getWidth(Camera), raspicam_wrapper_getHeight(Camera));
+        fprintf(outFile, "%d %d 255\n", width, height);
         // write the image data
-        fwrite(data, 1, raspicam_wrapper_getImageTypeSize(Camera, RASPICAM_WRAPPER_FORMAT_RGB), outFile);
+        fwrite(data, 1, size, outFile);
         fclose(outFile);
-        printf("Image, picture saved as test1.ppm\n");
+        printf("Image, picture saved as %s\n", name);
     }
+}
+
+void arrToPPM(char *name, int width, int height, unsigned char data[width][height])
+{
+    unsigned char lin[height * width * 3];
+    struct RGB_pixel *pixel = (struct RGB_pixel *)lin; // view data as R-byte, G-byte, and B-byte per pixel
+
+    for (int i = 0; i < height; i++)
+    {
+        for (int j = 0; j < width; j++)
+        {
+            pixel[width * i + j].R = data[j][i];
+            pixel[width * i + j].G = data[j][i];
+            pixel[width * i + j].B = data[j][i];
+        }
+    }
+
+    dataToPPM(lin, name, width, height, width * height * 3);
+}
+
+unsigned char avgArr(int wStart, int hStart, int scale, int width, int height, unsigned char data[width][height])
+{
+    unsigned int avg;
+
+    for (int i = wStart; i < wStart + scale; i++)
+    {
+        for (int j = wStart; j < wStart + scale; j++)
+        {
+            avg += (unsigned int)data[i][j];
+        }
+    }
+
+    return (unsigned char)(avg / (scale * scale));
+}
+
+void sendToArray(unsigned char *data, int width, int height)
+{
+    unsigned char largeArr[width][height];
+    struct RGB_pixel *pixel = (struct RGB_pixel *)data; // view data as R-byte, G-byte, and B-byte per pixel
+
+    for (int i = 0; i < height; i++)
+    {
+        for (int j = 0; j < width; j++)
+        {
+            largeArr[j][i] = pixel[width * i + j].B;
+        }
+    }
+
+    for (int i = 0; i < IMG_RED_WIDTH; i++)
+    {
+        for (int j = 0; j < IMG_RED_HEIGHT; j++)
+        {
+            state.image[i][j] = avgArr(i, j, 16, width, height, largeArr);
+        }
+    }
+    arrToPPM("testarr.ppm", IMG_RED_WIDTH, IMG_RED_HEIGHT, state.image);
 }
 
 void makeGrayscale(unsigned char *data, unsigned int pixel_count)
@@ -1335,7 +1394,8 @@ void processPic()
     unsigned int pixel_count = pixHeight * pixWidth;
 
     makeGrayscale(data, pixel_count);
-    dataToPPM(data); //FIXME
+    sendToArray(data, pixWidth, pixHeight);
+    dataToPPM(data, "test1.ppm", pixWidth, pixHeight, image_size); //FIXME
 
     free(data);
 }
