@@ -52,6 +52,8 @@
 #include "raspicam_wrapper.h"
 
 #define PI 3.14159265358979
+#define IMG_RED_HEIGHT 60
+#define IMG_RED_WIDTH 80
 
 const int PWM_MAX = 1000;
 const int PWM_MIN = 260;
@@ -63,8 +65,6 @@ const int TURN_LOW = PWM_MIN + 2 * PWM_5_PERC;
 const int RAMP_TIME = 15; //us interval to ramp up / down speed
 const int INSTR_QUEUE_SIZE = 1024;
 const int DATA_QUEUE_SIZE = 10000; // about 1.67 minutes of data
-const int IMG_RED_HEIGHT = 60;
-const int IMG_RED_WIDTH = 80;
 const long TURN_TIME = 300000;
 const long Z_C_TURN_TIME = TURN_TIME / 2;
 const long CHECK_IR_INT = TURN_TIME / 100;
@@ -104,7 +104,7 @@ struct publicState
     int z_count;
     int c_count;
     bool newPic; //is there a new pic to process?
-    unsigned char image[80][60];
+    unsigned char image[IMG_RED_WIDTH][IMG_RED_HEIGHT];
 } state;
 
 struct dataQueue
@@ -1325,17 +1325,32 @@ void arrToPPM(char *name, int width, int height, unsigned char data[width][heigh
 
 unsigned char avgArr(int wStart, int hStart, int scale, int width, int height, unsigned char data[width][height])
 {
-    unsigned int avg;
+    unsigned int avg = 0;
+
+    wStart = wStart * scale;
+    hStart = hStart * scale;
 
     for (int i = wStart; i < wStart + scale; i++)
     {
-        for (int j = wStart; j < wStart + scale; j++)
+        for (int j = hStart; j < hStart + scale; j++)
         {
             avg += (unsigned int)data[i][j];
         }
     }
 
     return (unsigned char)(avg / (scale * scale));
+}
+
+void threshold(unsigned char max, unsigned char min)
+{
+    int threshold = (unsigned int)min + (((unsigned int)max - (unsigned int)min) / 2);
+    for (int i = 0; i < IMG_RED_HEIGHT; i++)
+    {
+        for (int j = 0; j < IMG_RED_WIDTH; j++)
+        {
+            state.image[j][i] = state.image[j][i] >= threshold ? 255 : 0;
+        }
+    }
 }
 
 void sendToArray(unsigned char *data, int width, int height)
@@ -1351,14 +1366,26 @@ void sendToArray(unsigned char *data, int width, int height)
         }
     }
 
+    uint16_t histogram[256];
+    memset((void *)histogram, 0, 256);
+
+    unsigned char pix;
+    unsigned char maxPix = 0;
+    unsigned char minPix = 0;
     for (int i = 0; i < IMG_RED_WIDTH; i++)
     {
         for (int j = 0; j < IMG_RED_HEIGHT; j++)
         {
-            state.image[i][j] = avgArr(i, j, 16, width, height, largeArr);
+            pix = avgArr(i, j, 16, width, height, largeArr);
+            state.image[i][j] = pix;
+            histogram[pix] += 1;
+            maxPix = histogram[pix] > maxPix ? histogram[pix] : maxPix;
+            minPix = histogram[pix] < minPix ? histogram[pix] : minPix;
         }
     }
-    arrToPPM("testarr.ppm", IMG_RED_WIDTH, IMG_RED_HEIGHT, state.image);
+
+    threshold(maxPix, minPix);
+    arrToPPM("testarr.ppm", IMG_RED_WIDTH, IMG_RED_HEIGHT, state.image); //FIXME
 }
 
 void makeGrayscale(unsigned char *data, unsigned int pixel_count)
