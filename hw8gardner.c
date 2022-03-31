@@ -392,6 +392,7 @@ void sendToArray(unsigned char *data, int width, int height, bool print)
     }
 
     threshold(maxPix, minPix);
+    findLine(width, height, state.image);
 
     if (print)
         arrToPPM("testarr.ppm", IMG_RED_WIDTH, IMG_RED_HEIGHT, state.image); //FIXME
@@ -418,6 +419,25 @@ void makeGrayscale(unsigned char *data, unsigned int pixel_count)
     }
 }
 
+void findLine(int width, int height, unsigned char data[width][height])
+{
+    bool allWhite = true;
+    int whiteLine = -1;
+    for (int i = 0; i < height; i++)
+    {
+        for (int j = 0; j < width; j++)
+        {
+            if (data[j][i] != 0)
+                allWhite = false;
+            if (j == width - 1 && allWhite)
+                whiteLine = i;
+        }
+        if (whiteLine > -1)
+            break;
+    }
+    printf("%d \n", whiteLine); //FIXME
+}
+
 void processPic(bool printFull, bool printThresh)
 {
     size_t image_size = raspicam_wrapper_getImageTypeSize(Camera, RASPICAM_WRAPPER_FORMAT_RGB);
@@ -429,6 +449,7 @@ void processPic(bool printFull, bool printThresh)
 
     makeGrayscale(data, pixel_count);
     sendToArray(data, pixWidth, pixHeight, printThresh);
+
     if (printFull)
         dataToPPM(data, "test1.ppm", pixWidth, pixHeight, image_size); //FIXME
 
@@ -462,20 +483,13 @@ void *procPic()
             ualarm(THREAD_PIC_PROCESS_TIME_uS, THREAD_PIC_PROCESS_TIME_uS); //set alarm
         }
 
-        pthread_mutex_lock(&newPicLock);
         if (state.newPic)
         {
             state.newPic = false;
-            pthread_mutex_unlock(&newPicLock);
-
             bool print = state.printPic;
             processPic(false, false);
-
-            pthread_mutex_lock(&printLock);
-            state.printPic = false;
-            pthread_mutex_unlock(&printLock);
+            // printf("hey");//FIXME
         }
-        pthread_mutex_unlock(&newPicLock);
 
         stopLoop = clock() / CLOCKS_PER_MIRCO;
         remainingTime = THREAD_PIC_PROCESS_TIME_uS - stopLoop + startLoop;
@@ -534,214 +548,6 @@ void *dataCollect()
             usleep(remainingTime); //sleep for remaining portion of 10ms
     }
     pthread_exit(0);
-}
-
-void *dataAnalyze()
-{
-    pthread_mutex_lock(&takePicLock);
-    pthread_cond_wait(&willTakePic, &takePicLock);
-    pthread_mutex_unlock(&takePicLock);
-
-    float AX, AY, AZ, GX, GY, GZ, RT;
-    float maxAX = 0, maxAY = 0, maxAZ = 0, minAX = 0, minAY = 0, minAZ = 0, maxGX = 0, maxGY = 0, maxGZ = 0, minGX = 0, minGY = 0, minGZ = 0;
-
-    pthread_mutex_lock(&fileWriteLock);
-    char filename[] = "./hw7m1data.txt";
-    sprintf(filename, "./hw7m%ddata.txt", state.mode);
-    FILE *fp = fopen(filename, "w+");
-
-    while (true)
-    {
-        if (state.end)
-        {
-            if (maxAX != 0 && minAY != 0)
-                fprintf(fp, "EXTR\n%f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f", maxAX, maxAY, maxAZ, minAX, minAY, minAZ, maxGX, maxGY, maxGZ, minGX, minGY, minGZ);
-            fclose(fp);
-            pthread_mutex_unlock(&fileWriteLock);
-
-            break;
-        }
-        if (dQueues.ACCEL_X.size == 0)
-        {
-            if (state.stopCollection)
-            {
-                if (maxAX != 0 && minAY != 0)
-                    fprintf(fp, "EXTR\n%f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f", maxAX, maxAY, maxAZ, minAX, minAY, minAZ, maxGX, maxGY, maxGZ, minGX, minGY, minGZ);
-                fclose(fp);
-
-                pthread_mutex_unlock(&fileWriteLock);
-
-                pthread_mutex_lock(&takePicLock);
-                pthread_cond_wait(&willTakePic, &takePicLock);
-                pthread_mutex_unlock(&takePicLock);
-
-                if (state.end)
-                    break;
-
-                maxAX = 0, maxAY = 0, maxAZ = 0, minAX = 0, minAY = 0, minAZ = 0, maxGX = 0, maxGY = 0, maxGZ = 0, minGX = 0, minGY = 0, minGZ = 0;
-
-                xVelocity = 0, yVelocity = 0; // m/s
-                xPos = 0, yPos = 0;           // m
-                heading = 0;
-
-                sprintf(filename, "./hw7m%ddata.txt", state.mode);
-                pthread_mutex_lock(&fileWriteLock);
-                fp = fopen(filename, "w+");
-            }
-            else
-                usleep(8);
-        }
-        else
-        {
-            AX = fQueuePop(&(dQueues.ACCEL_X));
-            AY = fQueuePop(&(dQueues.ACCEL_Y));
-            AZ = fQueuePop(&(dQueues.ACCEL_Z));
-            GX = fQueuePop(&(dQueues.GYRO_X));
-            GY = fQueuePop(&(dQueues.GYRO_Y));
-            GZ = fQueuePop(&(dQueues.GYRO_Z));
-            RT = fQueuePop(&(dQueues.TIME)) / CLOCKS_PER_SEC;
-
-            maxAX = AX > maxAX ? AX : maxAX;
-            maxAY = AY > maxAY ? AY : maxAY;
-            maxAZ = AZ > maxAZ ? AZ : maxAZ;
-            maxGX = GX > maxGX ? GX : maxGX;
-            maxGY = GY > maxGY ? GY : maxGY;
-            maxGZ = GZ > maxGZ ? GZ : maxGZ;
-            maxAX = AX > maxAX ? AX : maxAX;
-            maxAY = AY > maxAY ? AY : maxAY;
-            maxAZ = AZ > maxAZ ? AZ : maxAZ;
-            maxGX = GX > maxGX ? GX : maxGX;
-            maxGY = GY > maxGY ? GY : maxGY;
-            maxGZ = GZ > maxGZ ? GZ : maxGZ;
-            minAX = AX < minAX ? AX : minAX;
-            minAY = AY < minAY ? AY : minAY;
-            minAZ = AZ < minAZ ? AZ : minAZ;
-            minGX = GX < minGX ? GX : minGX;
-            minGY = GY < minGY ? GY : minGY;
-            minGZ = GZ < minGZ ? GZ : minGZ;
-            minAX = AX < minAX ? AX : minAX;
-            minAY = AY < minAY ? AY : minAY;
-            minAZ = AZ < minAZ ? AZ : minAZ;
-            minGX = GX < minGX ? GX : minGX;
-            minGY = GY < minGY ? GY : minGY;
-            minGZ = GZ < minGZ ? GZ : minGZ;
-
-            heading = (heading + ((int)(GZ * 10) / 10) * RT);
-            // if (GZ > 1)
-            // printf("head: %d", ((int)GZ));
-
-            AY = (((int)(AY * 10)) / 10.0);
-
-            yVelocity += RT * (AY * cos(heading / 180 * PI) + AX * sin(heading / 180 * PI));
-            yPos += RT * yVelocity;
-
-            AX = (((int)(AX * 1)) / 1.0);
-
-            xVelocity += RT * (AX * cos(heading / 180 * PI) + AY * sin(heading / 180 * PI));
-            xPos += RT * xVelocity;
-
-            fprintf(fp, "%f, %f, %f, %f, %f, %f \n", AX, AY, AZ, GX, GY, GZ);
-        }
-    }
-    pthread_exit(0);
-}
-
-void printData(int mode)
-{
-    pthread_mutex_lock(&fileWriteLock);
-    char filename[] = "./hw7m1data.txt";
-    sprintf(filename, "./hw7m%ddata.txt", state.mode);
-    FILE *fp = fopen(filename, "r");
-
-    char *token;
-    char currentline[500];
-    char lastLine[500];
-    float maxMin[12]; //maxAX, maxAY, maxAZ, minAX, minAY, minAZ, maxGX, maxGY, maxGZ, minGX, minGY, minGZ = 0;
-    float rangeAX, intAX, rangeAY, intAY, rangeAZ, intAZ, rangeGX, intGX, rangeGY, intGY, rangeGZ, intGZ, minAX, minAY, minAZ, minGX, minGY, minGZ = 0;
-
-    while (fgets(currentline, sizeof(currentline), fp) != NULL)
-    {
-        strcpy(lastLine, currentline);
-    }
-
-    //get min max data
-    token = strtok(lastLine, ",");
-    for (int i = 0; i < 12; i++)
-    {
-        if (token == NULL)
-            break;
-        maxMin[i] = atof(token);
-        token = strtok(NULL, ",");
-    }
-
-    minAX = maxMin[3];
-    minAY = maxMin[4];
-    minAZ = maxMin[5];
-    minGX = maxMin[9];
-    minGY = maxMin[10];
-    minGZ = maxMin[11];
-
-    rangeAX = maxMin[0] - minAX;
-    rangeAY = maxMin[1] - minAY;
-    rangeAZ = maxMin[2] - minAZ;
-    rangeGX = maxMin[6] - minGX;
-    rangeAX = maxMin[7] - minGY;
-    rangeAX = maxMin[8] - minGZ;
-
-    intAX = rangeAX / 10;
-    intAY = rangeAY / 10;
-    intAZ = rangeAZ / 10;
-    intGX = rangeGX / 10;
-    intGY = rangeGY / 10;
-    intGZ = rangeGZ / 10;
-
-    fseek(fp, 0, SEEK_SET);
-
-    printf("\n");
-
-    float printVal;
-    while (fgets(currentline, sizeof(currentline), fp) != NULL)
-    {
-        token = strtok(currentline, ",");
-        if (token[0] == 'E')
-            break;
-        for (int i = 0; i < 6; i++)
-        {
-            switch (i)
-            {
-            case 0:
-                printf("%d", (int)((atof(token) - minAX) / intAX));
-                break;
-            case 1:
-                printf("%d", (int)((atof(token) - minAY) / intAY));
-                break;
-            case 2:
-                printf("%d", (int)((atof(token) - minAY) / intAZ));
-                break;
-            case 3:
-                printf("%d", (int)((atof(token) - minGX) / intGX));
-                break;
-            case 4:
-                printf("%d", (int)((atof(token) - minGY) / intGY));
-                break;
-            case 5:
-                printf("%d", (int)((atof(token) - minGZ) / intGZ));
-                break;
-            }
-            token = strtok(NULL, ",");
-        }
-        printf("\n");
-    }
-
-    fclose(fp);
-    pthread_mutex_unlock(&fileWriteLock);
-}
-
-void printN()
-{
-    printf("xVel: %f, yVel %f\n", xVelocity, yVelocity); //FIXME
-    printf("xPos: %f, yPos %f\n", xPos, yPos);           //FIXME
-    printf("head: %f\n", heading);                       //FIXME
 }
 
 void *scheduler()
@@ -1621,8 +1427,8 @@ int main(void)
 
         //reference
 
-        // takePic();    //FIXME
-        // processPic(); //FIXME
+        takePic();              //FIXME
+        processPic(true, true); //FIXME
 
         cleanQuit(); //turn off all lights and quit
     }
