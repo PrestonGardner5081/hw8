@@ -52,8 +52,8 @@
 #include "raspicam_wrapper.h"
 
 #define PI 3.14159265358979
-#define IMG_RED_HEIGHT 60
-#define IMG_RED_WIDTH 80
+#define IMG_RED_HEIGHT 260
+#define IMG_RED_WIDTH 320
 
 const int PWM_MAX = 1000;
 const int PWM_MIN = 260;
@@ -68,7 +68,8 @@ const int DATA_QUEUE_SIZE = 10000; // about 1.67 minutes of data
 const long TURN_TIME = 300000;
 const long Z_C_TURN_TIME = TURN_TIME / 2;
 const long CHECK_IR_INT = TURN_TIME / 100;
-const long THREAD_PROCESS_TIME_uS = 10000; //10000 uS = 10 ms
+const long THREAD_PROCESS_TIME_uS = 10000;      //10000 uS = 10 ms
+const long THREAD_PIC_PROCESS_TIME_uS = 100000; //100000 uS = 100 ms
 const long CLOCKS_PER_MILLI = CLOCKS_PER_SEC / 1000;
 const long CLOCKS_PER_MIRCO = CLOCKS_PER_MILLI / 1000;
 const float ACC_PRECISION = 0.001;
@@ -84,8 +85,8 @@ struct calibration_data calibration_gyroscope;
 struct calibration_data calibration_magnetometer;
 struct raspicam_wrapper_handle *Camera;
 
-pthread_mutex_t inputLock, leftControlLock, rightControlLock, scheduleLock, pwmLock, printLock, dataCollectLock, fileWriteLock, writeCountsLock; //FIXME PRINTLOCK
-pthread_cond_t willCollectData = PTHREAD_COND_INITIALIZER;
+pthread_mutex_t inputLock, leftControlLock, rightControlLock, scheduleLock, pwmLock, printLock, takePicLock, fileWriteLock, writeCountsLock, newPicLock; //FIXME PRINTLOCK
+pthread_cond_t willTakePic = PTHREAD_COND_INITIALIZER;
 
 struct publicState
 {
@@ -103,7 +104,8 @@ struct publicState
     int mode; // 0 = m0, 1 = m1, 2 = m2
     int z_count;
     int c_count;
-    bool newPic; //is there a new pic to process?
+    bool newPic;   //is there a new pic to process?
+    bool printPic; //should we print pic?
     unsigned char image[IMG_RED_WIDTH][IMG_RED_HEIGHT];
 } state;
 
@@ -282,13 +284,214 @@ void getAccData(int sig_num)
     pthread_mutex_unlock(&writeCountsLock);
 }
 
+void takePic()
+{
+    raspicam_wrapper_grab(Camera);
+
+    pthread_mutex_lock(&newPicLock);
+    state.newPic = true;
+    pthread_mutex_unlock(&newPicLock);
+}
+
+void dataToPPM(unsigned char *data, char *name, int width, int height, int size) //for testing
+{
+    FILE *outFile = fopen(name, "wb");
+    if (outFile != NULL)
+    {
+        fprintf(outFile, "P6\n"); // write .ppm file header
+        fprintf(outFile, "%d %d 255\n", width, height);
+        // write the image data
+        fwrite(data, 1, size, outFile);
+        fclose(outFile);
+        printf("Image, picture saved as %s\n", name);
+    }
+}
+
+void arrToPPM(char *name, int width, int height, unsigned char data[width][height])
+{
+    unsigned char lin[height * width * 3];
+    struct RGB_pixel *pixel = (struct RGB_pixel *)lin; // view data as R-byte, G-byte, and B-byte per pixel
+
+    for (int i = 0; i < height; i++)
+    {
+        for (int j = 0; j < width; j++)
+        {
+            pixel[width * i + j].R = data[j][i];
+            pixel[width * i + j].G = data[j][i];
+            pixel[width * i + j].B = data[j][i];
+        }
+    }
+
+    dataToPPM(lin, name, width, height, width * height * 3);
+}
+
+unsigned char avgArr(int wStart, int hStart, int scale, int width, int height, unsigned char data[width][height])
+{
+    unsigned int avg = 0;
+
+    wStart = wStart * scale;
+    hStart = hStart * scale;
+
+    for (int i = wStart; i < wStart + scale; i++)
+    {
+        for (int j = hStart; j < hStart + scale; j++)
+        {
+            avg += (unsigned int)data[i][j];
+        }
+    }
+
+    return (unsigned char)(avg / (scale * scale));
+}
+
+void threshold(unsigned char max, unsigned char min)
+{
+    int threshold = (unsigned int)min + (((unsigned int)max - (unsigned int)min) / 2);
+    for (int i = 0; i < IMG_RED_HEIGHT; i++)
+    {
+        for (int j = 0; j < IMG_RED_WIDTH; j++)
+        {
+            state.image[j][i] = state.image[j][i] >= threshold ? 255 : 0;
+            // if (i % 6 == 0 && j % 6 == 0) //FIXME
+            // printf("%d ", state.image[j][i] > 1 ? 1 : 0);
+        }
+        // if (i % 6 == 0) //FIXME
+        // printf("\n");
+    }
+    // printf("\n\n");
+}
+
+void sendToArray(unsigned char *data, int width, int height, bool print)
+{
+    unsigned char largeArr[width][height];
+    struct RGB_pixel *pixel = (struct RGB_pixel *)data; // view data as R-byte, G-byte, and B-byte per pixel
+
+    for (int i = 0; i < height; i++)
+    {
+        for (int j = 0; j < width; j++)
+        {
+            largeArr[j][i] = pixel[width * i + j].B;
+        }
+    }
+
+    uint16_t histogram[256];
+    memset((void *)histogram, 0, 256);
+
+    unsigned char pix;
+    unsigned char maxPix = 0;
+    unsigned char minPix = 0;
+    for (int i = 0; i < IMG_RED_WIDTH; i++)
+    {
+        for (int j = 0; j < IMG_RED_HEIGHT; j++)
+        {
+            pix = avgArr(i, j, 4, width, height, largeArr);
+            state.image[i][j] = pix;
+            histogram[pix] += 1;
+            maxPix = histogram[pix] > maxPix ? histogram[pix] : maxPix;
+            minPix = histogram[pix] < minPix ? histogram[pix] : minPix;
+        }
+    }
+
+    threshold(maxPix, minPix);
+
+    if (print)
+        arrToPPM("testarr.ppm", IMG_RED_WIDTH, IMG_RED_HEIGHT, state.image); //FIXME
+}
+
+void makeGrayscale(unsigned char *data, unsigned int pixel_count)
+{
+    struct RGB_pixel *pixel;
+    unsigned int pixel_index;
+    unsigned char pixel_value;
+
+    pixel = (struct RGB_pixel *)data; // view data as R-byte, G-byte, and B-byte per pixel
+
+    for (pixel_index = 0; pixel_index < pixel_count; pixel_index++)
+    {
+        // gray scale => average of R color, G color, and B color intensity
+        pixel_value = (((unsigned int)(pixel[pixel_index].R)) +
+                       ((unsigned int)(pixel[pixel_index].G)) +
+                       ((unsigned int)(pixel[pixel_index].B))) /
+                      3;                    // do not worry about rounding
+        pixel[pixel_index].R = pixel_value; // same intensity for all three color
+        pixel[pixel_index].G = pixel_value;
+        pixel[pixel_index].B = pixel_value;
+    }
+}
+
+void processPic(bool printFull, bool printThresh)
+{
+    size_t image_size = raspicam_wrapper_getImageTypeSize(Camera, RASPICAM_WRAPPER_FORMAT_RGB);
+    unsigned char *data = (unsigned char *)malloc(image_size);
+    raspicam_wrapper_retrieve(Camera, data, RASPICAM_WRAPPER_FORMAT_RGB);
+    unsigned int pixHeight = raspicam_wrapper_getHeight(Camera);
+    unsigned int pixWidth = raspicam_wrapper_getWidth(Camera);
+    unsigned int pixel_count = pixHeight * pixWidth;
+
+    makeGrayscale(data, pixel_count);
+    sendToArray(data, pixWidth, pixHeight, printThresh);
+    if (printFull)
+        dataToPPM(data, "test1.ppm", pixWidth, pixHeight, image_size); //FIXME
+
+    free(data);
+}
+
+void *procPic()
+{
+    long remainingTime = 0, startLoop = 0, stopLoop = 0;
+    pthread_mutex_lock(&takePicLock);
+    pthread_cond_wait(&willTakePic, &takePicLock);
+    pthread_mutex_unlock(&takePicLock);
+
+    ualarm(THREAD_PIC_PROCESS_TIME_uS, THREAD_PIC_PROCESS_TIME_uS); //set alarm
+
+    while (true)
+    {
+        startLoop = clock() / CLOCKS_PER_MIRCO;
+        if (state.end)
+        {
+            ualarm(0, 0); //reset alarm
+            break;
+        }
+        if (state.stopCollection)
+        {                 //stop collection if s is hit
+            ualarm(0, 0); //reset alarm
+            pthread_mutex_lock(&takePicLock);
+            pthread_cond_wait(&willTakePic, &takePicLock);
+            pthread_mutex_unlock(&takePicLock);
+
+            ualarm(THREAD_PIC_PROCESS_TIME_uS, THREAD_PIC_PROCESS_TIME_uS); //set alarm
+        }
+
+        pthread_mutex_lock(&newPicLock);
+        if (state.newPic)
+        {
+            state.newPic = false;
+            pthread_mutex_unlock(&newPicLock);
+
+            bool print = state.printPic;
+            processPic(false, false);
+
+            pthread_mutex_lock(&printLock);
+            state.printPic = false;
+            pthread_mutex_unlock(&printLock);
+        }
+        pthread_mutex_unlock(&newPicLock);
+
+        stopLoop = clock() / CLOCKS_PER_MIRCO;
+        remainingTime = THREAD_PIC_PROCESS_TIME_uS - stopLoop + startLoop;
+        if (remainingTime > 0)
+            usleep(remainingTime); //sleep for remaining portion of 100ms
+    }
+    pthread_exit(0);
+}
+
 void *dataCollect()
 {
     long remainingTime = 0, startLoop = 0, stopLoop = 0;
 
-    pthread_mutex_lock(&dataCollectLock);
-    pthread_cond_wait(&willCollectData, &dataCollectLock);
-    pthread_mutex_unlock(&dataCollectLock);
+    pthread_mutex_lock(&takePicLock);
+    pthread_cond_wait(&willTakePic, &takePicLock);
+    pthread_mutex_unlock(&takePicLock);
 
     ualarm(THREAD_PROCESS_TIME_uS, THREAD_PROCESS_TIME_uS); //set alarm
     state.readCounts = 0;
@@ -304,9 +507,9 @@ void *dataCollect()
         if (state.stopCollection)
         {                 //stop collection if s is hit
             ualarm(0, 0); //reset alarm
-            pthread_mutex_lock(&dataCollectLock);
-            pthread_cond_wait(&willCollectData, &dataCollectLock);
-            pthread_mutex_unlock(&dataCollectLock);
+            pthread_mutex_lock(&takePicLock);
+            pthread_cond_wait(&willTakePic, &takePicLock);
+            pthread_mutex_unlock(&takePicLock);
             state.readCounts = 0;
             ualarm(THREAD_PROCESS_TIME_uS, THREAD_PROCESS_TIME_uS); //set alarm
         }
@@ -335,9 +538,9 @@ void *dataCollect()
 
 void *dataAnalyze()
 {
-    pthread_mutex_lock(&dataCollectLock);
-    pthread_cond_wait(&willCollectData, &dataCollectLock);
-    pthread_mutex_unlock(&dataCollectLock);
+    pthread_mutex_lock(&takePicLock);
+    pthread_cond_wait(&willTakePic, &takePicLock);
+    pthread_mutex_unlock(&takePicLock);
 
     float AX, AY, AZ, GX, GY, GZ, RT;
     float maxAX = 0, maxAY = 0, maxAZ = 0, minAX = 0, minAY = 0, minAZ = 0, maxGX = 0, maxGY = 0, maxGZ = 0, minGX = 0, minGY = 0, minGZ = 0;
@@ -368,9 +571,9 @@ void *dataAnalyze()
 
                 pthread_mutex_unlock(&fileWriteLock);
 
-                pthread_mutex_lock(&dataCollectLock);
-                pthread_cond_wait(&willCollectData, &dataCollectLock);
-                pthread_mutex_unlock(&dataCollectLock);
+                pthread_mutex_lock(&takePicLock);
+                pthread_cond_wait(&willTakePic, &takePicLock);
+                pthread_mutex_unlock(&takePicLock);
 
                 if (state.end)
                     break;
@@ -553,7 +756,7 @@ void *scheduler()
         startLoop = clock() / CLOCKS_PER_MIRCO;
         if (state.end)
         {
-            pthread_cond_broadcast(&willCollectData);
+            pthread_cond_broadcast(&willTakePic);
             break;
         }
 
@@ -588,7 +791,7 @@ void *scheduler()
                     queuePush('s', &state.leftQueue);
                     pthread_mutex_unlock(&leftControlLock);
 
-                    pthread_cond_broadcast(&willCollectData);
+                    pthread_cond_broadcast(&willTakePic);
                     m0TimerStart = clock() / CLOCKS_PER_MIRCO;
                 }
                 else if (command == '1')
@@ -629,7 +832,7 @@ void *scheduler()
                 }
                 else
                 {
-                    printf("\n\033[0;33mhw5>\033[0m ");
+                    printf("\n\033[0;33mhw8>\033[0m ");
                     printf("m%c is not a command", command);
                 }
             }
@@ -652,15 +855,7 @@ void *scheduler()
                 else if (command == 'w' && state.leftDirection != 'w' && state.rightDirection != 'w')
                 {
                     state.stopCollection = false;
-                    pthread_cond_broadcast(&willCollectData);
-                }
-                else if (command == 'p')
-                {
-                    printData(2);
-                }
-                else if (command == 'n')
-                {
-                    printN();
+                    // pthread_cond_broadcast(&willTakePic);
                 }
 
                 pthread_mutex_lock(&leftControlLock);
@@ -689,92 +884,94 @@ void *scheduler()
                 queuePush('s', &state.leftQueue);
                 pthread_mutex_unlock(&leftControlLock);
             }
-            else if (command == 'w' && state.leftDirection != 'w' && state.rightDirection != 'w')
-            {
-                // calibrate_accelerometer_and_gyroscope(&calibration_accelerometer, &calibration_gyroscope, io->bsc);
-                m2IsDriving = true;
+            else if (command == 'w')
+            { //FIXME
                 state.stopCollection = false;
-                pthread_cond_broadcast(&willCollectData);
-
-                GPIO_SET(io->gpio, 5); //set to forward
-                GPIO_CLR(io->gpio, 6);
-                GPIO_SET(io->gpio, 22); //set to forward
-                GPIO_CLR(io->gpio, 23);
-                state.leftDirection = 'w';
-                state.rightDirection = 'w';
-
-                setSpdLeft(PWM_MIN + PWM_5_PERC);
-                setSpdRight(PWM_MIN + PWM_5_PERC);
+                pthread_cond_broadcast(&willTakePic);
             }
             else if (command == 'p')
             {
-                printData(2);
+                pthread_mutex_lock(&printLock);
+                state.printPic = true;
+                pthread_mutex_unlock(&printLock);
             }
-            else if (command == 'n')
-            {
-                printN();
-            }
+            // else if (command == 'w' && state.leftDirection != 'w' && state.rightDirection != 'w')
+            // {
+            //     // calibrate_accelerometer_and_gyroscope(&calibration_accelerometer, &calibration_gyroscope, io->bsc);
+            //     m2IsDriving = true;
+            //     pthread_cond_broadcast(&willTakePic);
 
-            if (m2IsDriving)
-            {
+            //     GPIO_SET(io->gpio, 5); //set to forward
+            //     GPIO_CLR(io->gpio, 6);
+            //     GPIO_SET(io->gpio, 22); //set to forward
+            //     GPIO_CLR(io->gpio, 23);
+            //     state.leftDirection = 'w';
+            //     state.rightDirection = 'w';
 
-                irRightVal = GPIO_READ(io->gpio, 25);
-                irLeftVal = GPIO_READ(io->gpio, 24);
-                // printf("right %d\n", irRightVal);
-                // printf("left %d\n", irLeftVal);
+            //     setSpdLeft(PWM_MIN + PWM_5_PERC);
+            //     setSpdRight(PWM_MIN + PWM_5_PERC);
+            // }
 
-                stopTurn = clock() / CLOCKS_PER_MIRCO;
+            // if (m2IsDriving)
+            // {
 
-                if (stopTurn - startTurn > CHECK_IR_INT)
-                {
-                    if (irRightVal != 0 && state.c_count < 5)
-                    {
-                        if (state.z_count > 0) //is currently turning right, reset and turn left
-                        {
-                            pthread_mutex_lock(&rightControlLock);
-                            pthread_mutex_lock(&leftControlLock);
-                            clearQueue(&state.rightQueue);
-                            clearQueue(&state.leftQueue);
-                            pthread_mutex_unlock(&rightControlLock);
-                            pthread_mutex_unlock(&leftControlLock);
-                            state.z_count = 0;
-                        }
-                        pthread_mutex_lock(&rightControlLock);
-                        queuePush('c', &state.rightQueue);
-                        pthread_mutex_unlock(&rightControlLock);
-                        pthread_mutex_lock(&leftControlLock);
-                        queuePush('c', &state.leftQueue);
-                        pthread_mutex_unlock(&leftControlLock);
-                        startTurn = clock() / CLOCKS_PER_MIRCO;
-                        // printf("right %d\n", irRightVal);
-                        // printf("left %d\n", irLeftVal);
-                        state.c_count += 1;
-                    }
-                    if (irLeftVal != 0 && state.z_count < 5)
-                    {
-                        if (state.c_count > 0) //is currently turning right, reset and turn left
-                        {
-                            pthread_mutex_lock(&rightControlLock);
-                            pthread_mutex_lock(&leftControlLock);
-                            clearQueue(&state.rightQueue);
-                            clearQueue(&state.leftQueue);
-                            pthread_mutex_unlock(&rightControlLock);
-                            pthread_mutex_unlock(&leftControlLock);
-                            state.c_count = 0;
-                        }
-                        pthread_mutex_lock(&rightControlLock);
-                        queuePush('z', &state.rightQueue);
-                        pthread_mutex_unlock(&rightControlLock);
-                        pthread_mutex_lock(&leftControlLock);
-                        queuePush('z', &state.leftQueue);
-                        pthread_mutex_unlock(&leftControlLock);
-                        startTurn = clock() / CLOCKS_PER_MIRCO;
-                        // printf("right %d\n", irRightVal);
-                        // printf("left %d\n", irLeftVal);
-                        state.z_count += 1;
-                    }
-                }
-            }
+            //     irRightVal = GPIO_READ(io->gpio, 25);
+            //     irLeftVal = GPIO_READ(io->gpio, 24);
+            //     // printf("right %d\n", irRightVal);
+            //     // printf("left %d\n", irLeftVal);
+
+            //     stopTurn = clock() / CLOCKS_PER_MIRCO;
+
+            //     if (stopTurn - startTurn > CHECK_IR_INT)
+            //     {
+            //         if (irRightVal != 0 && state.c_count < 5)
+            //         {
+            //             if (state.z_count > 0) //is currently turning right, reset and turn left
+            //             {
+            //                 pthread_mutex_lock(&rightControlLock);
+            //                 pthread_mutex_lock(&leftControlLock);
+            //                 clearQueue(&state.rightQueue);
+            //                 clearQueue(&state.leftQueue);
+            //                 pthread_mutex_unlock(&rightControlLock);
+            //                 pthread_mutex_unlock(&leftControlLock);
+            //                 state.z_count = 0;
+            //             }
+            //             pthread_mutex_lock(&rightControlLock);
+            //             queuePush('c', &state.rightQueue);
+            //             pthread_mutex_unlock(&rightControlLock);
+            //             pthread_mutex_lock(&leftControlLock);
+            //             queuePush('c', &state.leftQueue);
+            //             pthread_mutex_unlock(&leftControlLock);
+            //             startTurn = clock() / CLOCKS_PER_MIRCO;
+            //             // printf("right %d\n", irRightVal);
+            //             // printf("left %d\n", irLeftVal);
+            //             state.c_count += 1;
+            //         }
+            //         if (irLeftVal != 0 && state.z_count < 5)
+            //         {
+            //             if (state.c_count > 0) //is currently turning right, reset and turn left
+            //             {
+            //                 pthread_mutex_lock(&rightControlLock);
+            //                 pthread_mutex_lock(&leftControlLock);
+            //                 clearQueue(&state.rightQueue);
+            //                 clearQueue(&state.leftQueue);
+            //                 pthread_mutex_unlock(&rightControlLock);
+            //                 pthread_mutex_unlock(&leftControlLock);
+            //                 state.c_count = 0;
+            //             }
+            //             pthread_mutex_lock(&rightControlLock);
+            //             queuePush('z', &state.rightQueue);
+            //             pthread_mutex_unlock(&rightControlLock);
+            //             pthread_mutex_lock(&leftControlLock);
+            //             queuePush('z', &state.leftQueue);
+            //             pthread_mutex_unlock(&leftControlLock);
+            //             startTurn = clock() / CLOCKS_PER_MIRCO;
+            //             // printf("right %d\n", irRightVal);
+            //             // printf("left %d\n", irLeftVal);
+            //             state.z_count += 1;
+            //         }
+            //     }
+            // }
         }
 
         stopLoop = clock() / CLOCKS_PER_MIRCO;
@@ -1279,158 +1476,16 @@ void *checkInput()
             pthread_mutex_unlock(&scheduleLock);
         }
 
-        printf("\n\033[0;33mhw5>\033[0m "); //newline for reading
+        printf("\n\033[0;33mhw8>\033[0m "); //newline for reading
     }
 
     pthread_exit(0);
 }
 
-void takePic()
-{
-    raspicam_wrapper_grab(Camera);
-    state.newPic = true;
-}
-
-void dataToPPM(unsigned char *data, char *name, int width, int height, int size) //for testing
-{
-    FILE *outFile = fopen(name, "wb");
-    if (outFile != NULL)
-    {
-        fprintf(outFile, "P6\n"); // write .ppm file header
-        fprintf(outFile, "%d %d 255\n", width, height);
-        // write the image data
-        fwrite(data, 1, size, outFile);
-        fclose(outFile);
-        printf("Image, picture saved as %s\n", name);
-    }
-}
-
-void arrToPPM(char *name, int width, int height, unsigned char data[width][height])
-{
-    unsigned char lin[height * width * 3];
-    struct RGB_pixel *pixel = (struct RGB_pixel *)lin; // view data as R-byte, G-byte, and B-byte per pixel
-
-    for (int i = 0; i < height; i++)
-    {
-        for (int j = 0; j < width; j++)
-        {
-            pixel[width * i + j].R = data[j][i];
-            pixel[width * i + j].G = data[j][i];
-            pixel[width * i + j].B = data[j][i];
-        }
-    }
-
-    dataToPPM(lin, name, width, height, width * height * 3);
-}
-
-unsigned char avgArr(int wStart, int hStart, int scale, int width, int height, unsigned char data[width][height])
-{
-    unsigned int avg = 0;
-
-    wStart = wStart * scale;
-    hStart = hStart * scale;
-
-    for (int i = wStart; i < wStart + scale; i++)
-    {
-        for (int j = hStart; j < hStart + scale; j++)
-        {
-            avg += (unsigned int)data[i][j];
-        }
-    }
-
-    return (unsigned char)(avg / (scale * scale));
-}
-
-void threshold(unsigned char max, unsigned char min)
-{
-    int threshold = (unsigned int)min + (((unsigned int)max - (unsigned int)min) / 2);
-    for (int i = 0; i < IMG_RED_HEIGHT; i++)
-    {
-        for (int j = 0; j < IMG_RED_WIDTH; j++)
-        {
-            state.image[j][i] = state.image[j][i] >= threshold ? 255 : 0;
-        }
-    }
-}
-
-void sendToArray(unsigned char *data, int width, int height)
-{
-    unsigned char largeArr[width][height];
-    struct RGB_pixel *pixel = (struct RGB_pixel *)data; // view data as R-byte, G-byte, and B-byte per pixel
-
-    for (int i = 0; i < height; i++)
-    {
-        for (int j = 0; j < width; j++)
-        {
-            largeArr[j][i] = pixel[width * i + j].B;
-        }
-    }
-
-    uint16_t histogram[256];
-    memset((void *)histogram, 0, 256);
-
-    unsigned char pix;
-    unsigned char maxPix = 0;
-    unsigned char minPix = 0;
-    for (int i = 0; i < IMG_RED_WIDTH; i++)
-    {
-        for (int j = 0; j < IMG_RED_HEIGHT; j++)
-        {
-            pix = avgArr(i, j, 16, width, height, largeArr);
-            state.image[i][j] = pix;
-            histogram[pix] += 1;
-            maxPix = histogram[pix] > maxPix ? histogram[pix] : maxPix;
-            minPix = histogram[pix] < minPix ? histogram[pix] : minPix;
-        }
-    }
-
-    threshold(maxPix, minPix);
-    arrToPPM("testarr.ppm", IMG_RED_WIDTH, IMG_RED_HEIGHT, state.image); //FIXME
-}
-
-void makeGrayscale(unsigned char *data, unsigned int pixel_count)
-{
-    struct RGB_pixel *pixel;
-    unsigned int pixel_index;
-    unsigned char pixel_value;
-
-    pixel = (struct RGB_pixel *)data; // view data as R-byte, G-byte, and B-byte per pixel
-
-    for (pixel_index = 0; pixel_index < pixel_count; pixel_index++)
-    {
-        // gray scale => average of R color, G color, and B color intensity
-        pixel_value = (((unsigned int)(pixel[pixel_index].R)) +
-                       ((unsigned int)(pixel[pixel_index].G)) +
-                       ((unsigned int)(pixel[pixel_index].B))) /
-                      3;                    // do not worry about rounding
-        pixel[pixel_index].R = pixel_value; // same intensity for all three color
-        pixel[pixel_index].G = pixel_value;
-        pixel[pixel_index].B = pixel_value;
-    }
-}
-
-void processPic()
-{
-    state.newPic = false;
-
-    size_t image_size = raspicam_wrapper_getImageTypeSize(Camera, RASPICAM_WRAPPER_FORMAT_RGB);
-    unsigned char *data = (unsigned char *)malloc(image_size);
-    raspicam_wrapper_retrieve(Camera, data, RASPICAM_WRAPPER_FORMAT_RGB);
-    unsigned int pixHeight = raspicam_wrapper_getHeight(Camera);
-    unsigned int pixWidth = raspicam_wrapper_getWidth(Camera);
-    unsigned int pixel_count = pixHeight * pixWidth;
-
-    makeGrayscale(data, pixel_count);
-    sendToArray(data, pixWidth, pixHeight);
-    dataToPPM(data, "test1.ppm", pixWidth, pixHeight, image_size); //FIXME
-
-    free(data);
-}
-
 int main(void)
 {
     signal(SIGINT, INThandler);
-    signal(SIGALRM, getAccData);
+    signal(SIGALRM, takePic);
 
     io = import_registers();
     Camera = raspicam_wrapper_create();
@@ -1442,8 +1497,6 @@ int main(void)
     }
     else
         printf("error opening camera\n");
-
-    init_gyro(io, &calibration_accelerometer, &calibration_gyroscope, &calibration_magnetometer);
 
     if (io != NULL)
     {
@@ -1468,7 +1521,7 @@ int main(void)
         GPIO_CLR(io->gpio, 23);
 
         printf("hit 'ctl c' or 'q' to quit\n");
-        printf("\033[0;33mhw5>\033[0m "); //newline for reading
+        printf("\033[0;33mhw8>\033[0m "); //newline for reading
 
         static struct termios attr;
         tcgetattr(STDIN_FILENO, &attr);
@@ -1533,15 +1586,17 @@ int main(void)
         pthread_mutex_init(&rightControlLock, NULL);
         pthread_mutex_init(&pwmLock, NULL);
         pthread_mutex_init(&printLock, NULL);
-        pthread_mutex_init(&dataCollectLock, NULL);
+        pthread_mutex_init(&takePicLock, NULL);
         pthread_mutex_init(&fileWriteLock, NULL);
         pthread_mutex_init(&writeCountsLock, NULL);
+        pthread_mutex_init(&newPicLock, NULL);
 
-        pthread_t inputThread, scheduleThread, leftThread, rightThread, dataCThread, dataAThread;
+        pthread_t inputThread, scheduleThread, leftThread, rightThread, dataCThread, dataAThread, procPicThread;
         pthread_create(&inputThread, &pAttr, &checkInput, NULL);   //create thread for input polling
         pthread_create(&scheduleThread, &pAttr, &scheduler, NULL); //create thread for menu handling
         pthread_create(&leftThread, &pAttr, &leftCtrl, NULL);      //create thread for orange blue pwm control
         pthread_create(&rightThread, &pAttr, &rightCtrl, NULL);    //create thread for orange blue pwm control
+        pthread_create(&procPicThread, &pAttr, &procPic, NULL);    //create thread for processing img
         // pthread_create(&dataCThread, &pAttr, &dataCollect, NULL);  //create thread data collection
         // pthread_create(&dataAThread, &pAttr, &dataAnalyze, NULL);  //create thread data collection
 
@@ -1549,6 +1604,7 @@ int main(void)
         pthread_join(scheduleThread, NULL);
         pthread_join(leftThread, NULL);
         pthread_join(rightThread, NULL);
+        pthread_join(procPicThread, NULL);
         // pthread_join(dataCThread, NULL);
         // pthread_join(dataAThread, NULL);
 
@@ -1558,14 +1614,15 @@ int main(void)
         pthread_mutex_destroy(&rightControlLock);
         pthread_mutex_destroy(&printLock);
         pthread_mutex_destroy(&pwmLock);
-        pthread_mutex_destroy(&dataCollectLock);
+        pthread_mutex_destroy(&takePicLock);
         pthread_mutex_destroy(&fileWriteLock);
         pthread_mutex_destroy(&writeCountsLock);
+        pthread_mutex_destroy(&newPicLock);
 
         //reference
 
-        takePic();
-        processPic();
+        // takePic();    //FIXME
+        // processPic(); //FIXME
 
         cleanQuit(); //turn off all lights and quit
     }
