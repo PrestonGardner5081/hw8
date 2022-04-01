@@ -52,7 +52,7 @@
 #include "raspicam_wrapper.h"
 
 #define PI 3.14159265358979
-#define IMG_RED_HEIGHT 260
+#define IMG_RED_HEIGHT 260 * 2 / 3
 #define IMG_RED_WIDTH 320
 
 const int PWM_MAX = 1000;
@@ -343,12 +343,12 @@ unsigned char avgArr(int wStart, int hStart, int scale, int width, int height, u
     return (unsigned char)(avg / (scale * scale));
 }
 
-void threshold(unsigned char max, unsigned char min)
+void threshold(unsigned char max, unsigned char min, int width, int height)
 {
-    int threshold = (unsigned int)min + (((unsigned int)max - (unsigned int)min) / 2);
-    for (int i = 0; i < IMG_RED_HEIGHT; i++)
+    int threshold = (unsigned int)min + (((unsigned int)max - (unsigned int)min) * 3 / 3);
+    for (int i = 0; i < height; i++)
     {
-        for (int j = 0; j < IMG_RED_WIDTH; j++)
+        for (int j = 0; j < width; j++)
         {
             state.image[j][i] = state.image[j][i] >= threshold ? 255 : 0;
             // if (i % 6 == 0 && j % 6 == 0) //FIXME
@@ -358,6 +358,79 @@ void threshold(unsigned char max, unsigned char min)
         // printf("\n");
     }
     // printf("\n\n");
+}
+
+void findLine(int width, int height, unsigned char data[width][height])
+{
+    bool allWhite = true;
+    int whiteLine = -1;
+    for (int i = 0; i < height; i++)
+    {
+        for (int j = 0; j < width; j++)
+        {
+            if (data[j][i] != 0)
+                allWhite = false;
+            if (j == width - 1 && allWhite)
+                whiteLine = i;
+        }
+        if (whiteLine > -1)
+            break;
+    }
+    printf("%d \n", whiteLine); //FIXME
+}
+
+int findCenterMass(int width, int height, unsigned char data[width][height])
+{
+    bool allWhite = false;
+    int centerMass1 = 0, centerMass2 = 0, pixCnt = 0, rowCnt = 0;
+
+    for (int j = 0; j < width; j++) // get center mass for first row
+    {
+        if (data[j][0] != (unsigned char)0)
+        {
+            centerMass1 += j;
+            pixCnt++;
+        }
+        if (data[j][0] != 0 && data[j][0] != 255) //FIXME
+            printf("baaaaad data %d \n", data[j][0]);
+    }
+
+    if (pixCnt > 0)
+        centerMass1 = centerMass1 / pixCnt;
+
+    if (centerMass1 > IMG_RED_WIDTH * 3 / 4 || centerMass1 < IMG_RED_WIDTH / 4) // rule out bad data
+    {
+        printf("%d \n", -1); //FIXME
+        return -1;
+    }
+
+    for (int i = 1; i < height; i++)
+    {
+        centerMass2 = 0;
+        pixCnt = 0;
+        rowCnt = i;
+
+        for (int j = 0; j < width; j++)
+        {
+            if (data[j][0] != (unsigned char)0 && abs(centerMass1 - j) < IMG_RED_WIDTH / 3)
+            {
+                centerMass2 += j;
+                pixCnt++;
+            }
+        }
+
+        if (pixCnt < IMG_RED_WIDTH * 3 / 4)
+        {
+            if (pixCnt > IMG_RED_WIDTH / 10)
+                centerMass1 = centerMass2 / pixCnt;
+            else
+                break;
+        }
+    }
+
+    printf("c :%d, r:%d \n", centerMass1, rowCnt); //FIXME
+
+    return centerMass1;
 }
 
 void sendToArray(unsigned char *data, int width, int height, bool print)
@@ -391,8 +464,8 @@ void sendToArray(unsigned char *data, int width, int height, bool print)
         }
     }
 
-    threshold(maxPix, minPix);
-    findLine(width, height, state.image);
+    threshold(maxPix, minPix, IMG_RED_WIDTH, IMG_RED_HEIGHT);
+    findCenterMass(IMG_RED_WIDTH, IMG_RED_HEIGHT, state.image);
 
     if (print)
         arrToPPM("testarr.ppm", IMG_RED_WIDTH, IMG_RED_HEIGHT, state.image); //FIXME
@@ -417,25 +490,6 @@ void makeGrayscale(unsigned char *data, unsigned int pixel_count)
         pixel[pixel_index].G = pixel_value;
         pixel[pixel_index].B = pixel_value;
     }
-}
-
-void findLine(int width, int height, unsigned char data[width][height])
-{
-    bool allWhite = true;
-    int whiteLine = -1;
-    for (int i = 0; i < height; i++)
-    {
-        for (int j = 0; j < width; j++)
-        {
-            if (data[j][i] != 0)
-                allWhite = false;
-            if (j == width - 1 && allWhite)
-                whiteLine = i;
-        }
-        if (whiteLine > -1)
-            break;
-    }
-    printf("%d \n", whiteLine); //FIXME
 }
 
 void processPic(bool printFull, bool printThresh)
@@ -486,8 +540,12 @@ void *procPic()
         if (state.newPic)
         {
             state.newPic = false;
+
+            pthread_mutex_lock(&printLock);
             bool print = state.printPic;
-            processPic(false, false);
+            processPic(print, print);
+            state.printPic = false;
+            pthread_mutex_unlock(&printLock);
             // printf("hey");//FIXME
         }
 
