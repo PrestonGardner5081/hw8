@@ -52,7 +52,7 @@
 #include "raspicam_wrapper.h"
 
 #define PI 3.14159265358979
-#define IMG_RED_HEIGHT 260 * 2 / 3
+#define IMG_RED_HEIGHT 260 / 2
 #define IMG_RED_WIDTH 320
 
 const int PWM_MAX = 1000;
@@ -345,7 +345,12 @@ unsigned char avgArr(int wStart, int hStart, int scale, int width, int height, u
 
 void threshold(unsigned char max, unsigned char min, int width, int height)
 {
-    int threshold = (unsigned int)min + (((unsigned int)max - (unsigned int)min) * 3 / 3);
+    int threshold;
+    if (max > min)
+        threshold = min + ((max - min) / 2);
+    else
+        threshold = max + ((min - max) / 2);
+
     for (int i = 0; i < height; i++)
     {
         for (int j = 0; j < width; j++)
@@ -446,8 +451,8 @@ void sendToArray(unsigned char *data, int width, int height, bool print)
         }
     }
 
-    uint16_t histogram[256];
-    memset((void *)histogram, 0, 256);
+    uint32_t histogram[256];
+    memset((void *)histogram, 0, 256 * sizeof(uint32_t));
 
     unsigned char pix;
     unsigned char maxPix = 0;
@@ -459,9 +464,19 @@ void sendToArray(unsigned char *data, int width, int height, bool print)
             pix = avgArr(i, j, 4, width, height, largeArr);
             state.image[i][j] = pix;
             histogram[pix] += 1;
-            maxPix = histogram[pix] > maxPix ? histogram[pix] : maxPix;
-            minPix = histogram[pix] < minPix ? histogram[pix] : minPix;
+            // maxPix = histogram[pix] > maxPix ? histogram[pix] : maxPix;
+            // minPix = histogram[pix] < minPix ? histogram[pix] : minPix;
         }
+    }
+
+    for (int i = 0; i < 256; i++)
+    {
+        maxPix = histogram[i] > histogram[maxPix] ? i : maxPix;
+    }
+
+    for (int i = 0; i < 256; i++)
+    {
+        minPix = (histogram[i] > histogram[minPix] && histogram[i] < histogram[maxPix] && abs(maxPix - i) > 10) ? i : minPix;
     }
 
     threshold(maxPix, minPix, IMG_RED_WIDTH, IMG_RED_HEIGHT);
