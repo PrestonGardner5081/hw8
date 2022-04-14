@@ -20,7 +20,7 @@ void write_image(unsigned char **, char *, int, int);
 void write_float_image(float **, char *, int, int);
 
 /* the following for pgm formatted images - note there are restrictions */
-void read_pgm_image(unsigned char **, char *, struct pgmfile *);
+void read_pgm_image(unsigned char **image_out, unsigned char *image_in, int width, int height);
 void write_pgm_image(unsigned char **, char *, struct pgmfile *);
 void read_pgm_header(FILE *, struct pgmfile *);
 void get_pgm_header(char *, struct pgmfile *);
@@ -142,7 +142,7 @@ void message_exit(char *type)
 char *type;
 */
 {
-	printf("error occurred when allocating %s image memory - aborting\n", type);
+	//printf("error occurred when allocating %s image memory - aborting\n", type);
 	exit(-1);
 }
 
@@ -161,7 +161,7 @@ int width,height;
 
 	if ((fp_in = fopen(filename, "rb")) == NULL)
 	{
-		printf("cant open %s\n", filename);
+		//printf("cant open %s\n", filename);
 		exit(-1);
 	}
 	for (i = 0; i < height; i++)
@@ -170,11 +170,11 @@ int width,height;
 	/* check the image file was the correct size */
 	if (feof(fp_in))
 	{
-		printf("ERROR: premature end of file - image too big?\n");
+		//printf("ERROR: premature end of file - image too big?\n");
 	}
 	else if (getc(fp_in) != EOF)
 	{
-		printf("ERROR: extra characters in file - image too small?\n");
+		//printf("ERROR: extra characters in file - image too small?\n");
 	}
 	fclose(fp_in);
 }
@@ -194,7 +194,7 @@ int width,height;
 
 	if ((fp_in = fopen(filename, "rb")) == NULL)
 	{
-		printf("cant open %s\n", filename);
+		//printf("cant open %s\n", filename);
 		exit(-1);
 	}
 
@@ -205,11 +205,11 @@ int width,height;
 	/* check the image file was the correct size */
 	if (feof(fp_in))
 	{
-		printf("ERROR: premature end of file - image too big?\n");
+		//printf("ERROR: premature end of file - image too big?\n");
 	}
 	else if (getc(fp_in) != EOF)
 	{
-		printf("ERROR: extra characters in file - image too small?\n");
+		//printf("ERROR: extra characters in file - image too small?\n");
 	}
 	fclose(fp_in);
 }
@@ -229,7 +229,7 @@ int width,height;
 
 	if ((fp_out = fopen(filename, "wb")) == NULL)
 	{
-		printf("cant open %s\n", filename);
+		//printf("cant open %s\n", filename);
 		exit(-1);
 	}
 
@@ -255,7 +255,7 @@ int width,height;
 
 	if ((fp_out = fopen(filename, "wb")) == NULL)
 	{
-		printf("cant open %s\n", filename);
+		//printf("cant open %s\n", filename);
 		exit(-1);
 	}
 
@@ -269,36 +269,36 @@ int width,height;
 	fclose(fp_out);
 }
 
-void read_pgm_image(unsigned char **image, char *filename, struct pgmfile *pg)
+void read_pgm_image(unsigned char **image_out, unsigned char *image_in, int width, int height)
 {
 	int i, j;
-	FILE *fp_in;
+	// FILE *fp_in;
 
-	if ((fp_in = fopen(filename, "rb")) == NULL)
-	{
-		printf("cant open %s\n", filename);
-		exit(-1);
-	}
-	/* read pg header */
-	read_pgm_header(fp_in, pg);
-	printf("%d %d %d\n", (*pg).pgm_width, (*pg).pgm_height, (*pg).pgm_depth);
+	// if ((fp_in = fopen(filename, "rb")) == NULL)
+	// {
+	// 	//printf("cant open %s\n", filename);
+	// 	exit(-1);
+	// }
+	// /* read pg header */
+	// read_pgm_header(fp_in, pg);
+	//printf("%d %d %d\n", (*pg).pgm_width, (*pg).pgm_height, (*pg).pgm_depth);
 
-	for (j = 0; j < (*pg).pgm_height; j++)
-		for (i = 0; i < (*pg).pgm_width; i++)
+	for (j = 0; j < height; j++)
+		for (i = 0; i < width; i++)
 		{
-			image[j][i] = (unsigned char)getc(fp_in);
+			image_out[j][i] = image_in[width * j + i];
 		}
 
 	/* check the image file was the correct size */
-	if (feof(fp_in))
-	{
-		printf("ERROR: premature end of file - image too big?\n");
-	}
-	else if (getc(fp_in) != EOF)
-	{
-		printf("ERROR: extra characters in file - image too small?\n");
-	}
-	fclose(fp_in);
+	// if (feof(fp_in))
+	// {
+	// 	//printf("ERROR: premature end of file - image too big?\n");
+	// }
+	// else if (getc(fp_in) != EOF)
+	// {
+	// 	//printf("ERROR: extra characters in file - image too small?\n");
+	// }
+	// fclose(fp_in);
 }
 
 void write_pgm_image(unsigned char **image, char *filename, struct pgmfile *pg)
@@ -330,6 +330,8 @@ void write_pgm_image(unsigned char **image, char *filename, struct pgmfile *pg)
 				putc(image[i][j], fp_out);
 			}
 		}
+
+	printf("Image, picture saved as %s\n", filename);
 	fclose(fp_out);
 }
 
@@ -357,8 +359,8 @@ void read_pgm_header(FILE *fp, struct pgmfile *pg)
 	(*pg).pgm_height = t2;
 	(*pg).pgm_depth = t3;
 
-	printf("image size: width: %d height: %d depth: %d\n",
-		   (*pg).pgm_width, (*pg).pgm_height, (*pg).pgm_depth);
+	//printf("image size: width: %d height: %d depth: %d\n",
+	//    (*pg).pgm_width, (*pg).pgm_height, (*pg).pgm_depth);
 
 	if ((*pg).pgm_depth != 255)
 	{
@@ -396,8 +398,8 @@ void get_pgm_header(char *filename, struct pgmfile *pg)
 	(*pg).pgm_height = t2;
 	(*pg).pgm_depth = t3;
 
-	printf("image size: width: %d height: %d depth: %d\n",
-		   (*pg).pgm_width, (*pg).pgm_height, (*pg).pgm_depth);
+	//printf("image size: width: %d height: %d depth: %d\n",
+	//    (*pg).pgm_width, (*pg).pgm_height, (*pg).pgm_depth);
 
 	if ((*pg).pgm_depth != 255)
 	{

@@ -4,5 +4,12 @@
 #define TRUE !FALSE
 #define DEFAULT_SIZE 512
 
-void edge_image(int, char *, char *, int, int, int);
+struct charImg
+{
+    unsigned char **image;
+    int width;
+    int height;
+};
+
+struct charImg edge_image(int pgmfile, unsigned char *input_data, char *file_out, int width, int height, int set_sobel);
 int **convolve(unsigned char **, int **, int, int, int);

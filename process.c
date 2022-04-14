@@ -13,7 +13,7 @@
 #include "malloc_image.h"
 
 /* open image file from file_in and write it out to file_out */
-void edge_image(int pgmfile, char *file_in, char *file_out, int width, int height, int set_sobel)
+struct charImg edge_image(int pgmfile, unsigned char *input_data, char *file_out, int width, int height, int set_sobel)
 {
 
   unsigned char **image_in;  /* specify image array - char image */
@@ -36,14 +36,11 @@ void edge_image(int pgmfile, char *file_in, char *file_out, int width, int heigh
 
   /* if correct PGM file format  then get height and width */
 
-  if (pgmfile == TRUE)
-  {
-    get_pgm_header(file_in, &pg);
-    height = pg.pgm_height;
-    width = pg.pgm_width;
-  }
+  pg.pgm_height = height;
+  pg.pgm_width = width;
+  pg.pgm_depth = 255;
 
-  printf("Image size: Height %d Width %d\n", width, height);
+  //printf("Image size: Height %d Width %d\n", width, height);
 
   /* allocate memory for image */
 
@@ -51,14 +48,8 @@ void edge_image(int pgmfile, char *file_in, char *file_out, int width, int heigh
 
   /* if file in PGM format then read info into predefined structure */
   /* else read raw file */
-  if (pgmfile == TRUE)
-  {
-    read_pgm_image(image_in, file_in, &pg);
-  }
-  else
-  {
-    read_image(image_in, file_in, width, height);
-  }
+
+  read_pgm_image(image_in, input_data, width, height);
 
   image_out = malloc_char_image(width, height);
 
@@ -118,14 +109,14 @@ void edge_image(int pgmfile, char *file_in, char *file_out, int width, int heigh
 
   if (set_sobel == TRUE)
   { /* Did user select sobel or not? */
-    printf("\nWill be using Sobel edge detection...\n");
+    //printf("\nWill be using Sobel edge detection...\n");
 
     first = convolve(image_in, smask_one, 3, width, height);
     second = convolve(image_in, smask_two, 3, width, height);
   }
   else
   {
-    printf("\nWill be using Robert's Cross edge detection...\n");
+    //printf("\nWill be using Robert's Cross edge detection...\n");
 
     first = convolve(image_in, mask_one, 2, width, height);
     second = convolve(image_in, mask_two, 2, width, height);
@@ -159,10 +150,13 @@ void edge_image(int pgmfile, char *file_in, char *file_out, int width, int heigh
   {
     write_pgm_image(image_out, file_out, &pg);
   }
-  else
-  {
-    write_image(image_out, file_out, width, height);
-  }
+
+  struct charImg transf_img;
+  transf_img.image = image_out;
+  transf_img.width = width;
+  transf_img.height = height;
+
+  return transf_img;
 }
 
 /* Given an image and a mask, it will return the convolution result.

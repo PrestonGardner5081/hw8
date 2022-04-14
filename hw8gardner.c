@@ -51,6 +51,7 @@
 #include "float_queue.h"
 #include "raspicam_wrapper.h"
 #include "raspicam_wrapper.h"
+#include "process.h"
 
 #define PI 3.14159265358979
 #define IMG_RED_HEIGHT 260 / 2
@@ -302,19 +303,24 @@ void dataToPPM(unsigned char *data, char *name, int width, int height, int size)
     }
 }
 
-void dataToPGM(unsigned char *data, char *name, int width, int height, int pixel_count, int size) //for testing
+void dataToPGMFormat(unsigned char *data, unsigned char *newData, int width, int height, int pixel_count)
 {
     struct RGB_pixel *pixel;
     unsigned int pixel_index;
     unsigned char pixel_value;
 
     pixel = (struct RGB_pixel *)data; // view data as R-byte, G-byte, and B-byte per pixel
-    unsigned char newData[pixel_count];
 
     for (pixel_index = 0; pixel_index < pixel_count; pixel_index++)
     {
         newData[pixel_index] = pixel[pixel_index].B; // RGB values are all equal, we can take any
     }
+}
+
+void dataToPGM(unsigned char *data, char *name, int width, int height, int pixel_count, int size) //for testing
+{
+    unsigned char newData[pixel_count];
+    dataToPGMFormat(data, newData, width, height, pixel_count);
 
     FILE *outFile = fopen(name, "wb");
     if (outFile != NULL)
@@ -327,7 +333,6 @@ void dataToPGM(unsigned char *data, char *name, int width, int height, int pixel
         printf("Image, picture saved as %s\n", name);
     }
 }
-
 
 void makeGrayscale(unsigned char *data, unsigned int pixel_count)
 {
@@ -358,6 +363,7 @@ void processPic(bool printFull, bool printThresh)
     unsigned int pixHeight = raspicam_wrapper_getHeight(Camera);
     unsigned int pixWidth = raspicam_wrapper_getWidth(Camera);
     unsigned int pixel_count = pixHeight * pixWidth;
+    struct charImg cImg;
 
     makeGrayscale(data, pixel_count);
 
@@ -365,6 +371,15 @@ void processPic(bool printFull, bool printThresh)
     {
         dataToPPM(data, "test1.ppm", pixWidth, pixHeight, image_size);              //FIXME
         dataToPGM(data, "test1.pgm", pixWidth, pixHeight, pixel_count, image_size); //FIXME
+        unsigned char pgmData[pixel_count];
+        dataToPGMFormat(data, pgmData, pixWidth, pixHeight, pixel_count);
+        cImg = edge_image(1, pgmData, "edge3.pgm", pixWidth, pixHeight, 1);
+    }
+    else
+    {
+        unsigned char pgmData[pixel_count];
+        dataToPGMFormat(data, pgmData, pixWidth, pixHeight, pixel_count);
+        cImg = edge_image(0, pgmData, "edge.pgm", pixWidth, pixHeight, 1);
     }
 
     free(data);
@@ -416,7 +431,6 @@ void *procPic()
     }
     pthread_exit(0);
 }
-
 
 void *scheduler()
 {
