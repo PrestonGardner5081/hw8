@@ -50,6 +50,7 @@
 #include "6050Init.h"
 #include "float_queue.h"
 #include "raspicam_wrapper.h"
+#include "raspicam_wrapper.h"
 
 #define PI 3.14159265358979
 #define IMG_RED_HEIGHT 260 / 2
@@ -119,6 +120,8 @@ struct dataQueue
     struct fQueue GYRO_Z;
     struct fQueue TIME;
 } dQueues;
+;
+;
 
 struct RGB_pixel
 {
@@ -276,14 +279,6 @@ int setSpdRight(int spd)
     return time_taken;
 }
 
-void getAccData(int sig_num)
-{
-    read_accelerometer_gyroscope(&calibration_accelerometer, &calibration_gyroscope, &state.sd, io->bsc);
-    pthread_mutex_lock(&writeCountsLock);
-    state.readCounts += 1;
-    pthread_mutex_unlock(&writeCountsLock);
-}
-
 void takePic()
 {
     raspicam_wrapper_grab(Camera);
@@ -307,184 +302,32 @@ void dataToPPM(unsigned char *data, char *name, int width, int height, int size)
     }
 }
 
-void arrToPPM(char *name, int width, int height, unsigned char data[width][height])
+void dataToPGM(unsigned char *data, char *name, int width, int height, int pixel_count, int size) //for testing
 {
-    unsigned char lin[height * width * 3];
-    struct RGB_pixel *pixel = (struct RGB_pixel *)lin; // view data as R-byte, G-byte, and B-byte per pixel
+    struct RGB_pixel *pixel;
+    unsigned int pixel_index;
+    unsigned char pixel_value;
 
-    for (int i = 0; i < height; i++)
+    pixel = (struct RGB_pixel *)data; // view data as R-byte, G-byte, and B-byte per pixel
+    unsigned char newData[pixel_count];
+
+    for (pixel_index = 0; pixel_index < pixel_count; pixel_index++)
     {
-        for (int j = 0; j < width; j++)
-        {
-            pixel[width * i + j].R = data[j][i];
-            pixel[width * i + j].G = data[j][i];
-            pixel[width * i + j].B = data[j][i];
-        }
+        newData[pixel_index] = pixel[pixel_index].B; // RGB values are all equal, we can take any
     }
 
-    dataToPPM(lin, name, width, height, width * height * 3);
+    FILE *outFile = fopen(name, "wb");
+    if (outFile != NULL)
+    {
+        fprintf(outFile, "P5\n"); // write .pgm file header
+        fprintf(outFile, "%d %d 255\n", width, height);
+        // write the image data
+        fwrite(newData, 1, size / 3, outFile);
+        fclose(outFile);
+        printf("Image, picture saved as %s\n", name);
+    }
 }
 
-unsigned char avgArr(int wStart, int hStart, int scale, int width, int height, unsigned char data[width][height])
-{
-    unsigned int avg = 0;
-
-    wStart = wStart * scale;
-    hStart = hStart * scale;
-
-    for (int i = wStart; i < wStart + scale; i++)
-    {
-        for (int j = hStart; j < hStart + scale; j++)
-        {
-            avg += (unsigned int)data[i][j];
-        }
-    }
-
-    return (unsigned char)(avg / (scale * scale));
-}
-
-void threshold(unsigned char max, unsigned char min, int width, int height)
-{
-    int threshold;
-    if (max > min)
-        threshold = min + ((max - min) / 2);
-    else
-        threshold = max + ((min - max) / 2);
-
-    for (int i = 0; i < height; i++)
-    {
-        for (int j = 0; j < width; j++)
-        {
-            state.image[j][i] = state.image[j][i] >= threshold ? 255 : 0;
-            // if (i % 6 == 0 && j % 6 == 0) //FIXME
-            // printf("%d ", state.image[j][i] > 1 ? 1 : 0);
-        }
-        // if (i % 6 == 0) //FIXME
-        // printf("\n");
-    }
-    // printf("\n\n");
-}
-
-void findLine(int width, int height, unsigned char data[width][height])
-{
-    bool allWhite = true;
-    int whiteLine = -1;
-    for (int i = 0; i < height; i++)
-    {
-        for (int j = 0; j < width; j++)
-        {
-            if (data[j][i] != 0)
-                allWhite = false;
-            if (j == width - 1 && allWhite)
-                whiteLine = i;
-        }
-        if (whiteLine > -1)
-            break;
-    }
-    printf("%d \n", whiteLine); //FIXME
-}
-
-int findCenterMass(int width, int height, unsigned char data[width][height])
-{
-    bool allWhite = false;
-    int centerMass1 = 0, centerMass2 = 0, pixCnt = 0, rowCnt = 0;
-
-    for (int j = 0; j < width; j++) // get center mass for first row
-    {
-        if (data[j][0] != (unsigned char)0)
-        {
-            centerMass1 += j;
-            pixCnt++;
-        }
-        if (data[j][0] != 0 && data[j][0] != 255) //FIXME
-            printf("baaaaad data %d \n", data[j][0]);
-    }
-
-    if (pixCnt > 0)
-        centerMass1 = centerMass1 / pixCnt;
-
-    if (centerMass1 > IMG_RED_WIDTH * 3 / 4 || centerMass1 < IMG_RED_WIDTH / 4) // rule out bad data
-    {
-        printf("%d \n", -1); //FIXME
-        return -1;
-    }
-
-    for (int i = 1; i < height; i++)
-    {
-        centerMass2 = 0;
-        pixCnt = 0;
-        rowCnt = i;
-
-        for (int j = 0; j < width; j++)
-        {
-            if (data[j][0] != (unsigned char)0 && abs(centerMass1 - j) < IMG_RED_WIDTH / 3)
-            {
-                centerMass2 += j;
-                pixCnt++;
-            }
-        }
-
-        if (pixCnt < IMG_RED_WIDTH * 3 / 4)
-        {
-            if (pixCnt > IMG_RED_WIDTH / 10)
-                centerMass1 = centerMass2 / pixCnt;
-            else
-                break;
-        }
-    }
-
-    printf("c :%d, r:%d \n", centerMass1, rowCnt); //FIXME
-
-    return centerMass1;
-}
-
-void sendToArray(unsigned char *data, int width, int height, bool print)
-{
-    unsigned char largeArr[width][height];
-    struct RGB_pixel *pixel = (struct RGB_pixel *)data; // view data as R-byte, G-byte, and B-byte per pixel
-
-    for (int i = 0; i < height; i++)
-    {
-        for (int j = 0; j < width; j++)
-        {
-            largeArr[j][i] = pixel[width * i + j].B;
-        }
-    }
-
-    uint32_t histogram[256];
-    memset((void *)histogram, 0, 256 * sizeof(uint32_t));
-
-    unsigned char pix;
-    unsigned char maxPix = 0;
-    unsigned char minPix = 0;
-    for (int i = 0; i < IMG_RED_WIDTH; i++)
-    {
-        for (int j = 0; j < IMG_RED_HEIGHT; j++)
-        {
-            pix = avgArr(i, j, 4, width, height, largeArr);
-            state.image[i][j] = pix;
-            histogram[pix] += 1;
-            // maxPix = histogram[pix] > maxPix ? histogram[pix] : maxPix;
-            // minPix = histogram[pix] < minPix ? histogram[pix] : minPix;
-        }
-    }
-
-    for (int i = 0; i < 256; i++)
-    {
-        maxPix = histogram[i] > histogram[maxPix] ? i : maxPix;
-    }
-
-    for (int i = 0; i < 256; i++)
-    {
-        minPix = (histogram[i] > histogram[minPix] && histogram[i] < histogram[maxPix] && abs(maxPix - i) > 10) ? i : minPix;
-    }
-
-    threshold(maxPix, minPix, IMG_RED_WIDTH, IMG_RED_HEIGHT);
-    findCenterMass(IMG_RED_WIDTH, IMG_RED_HEIGHT, state.image);
-
-    if (print)
-        arrToPPM("testarr.ppm", IMG_RED_WIDTH, IMG_RED_HEIGHT, state.image); //FIXME
-}
 
 void makeGrayscale(unsigned char *data, unsigned int pixel_count)
 {
@@ -517,10 +360,12 @@ void processPic(bool printFull, bool printThresh)
     unsigned int pixel_count = pixHeight * pixWidth;
 
     makeGrayscale(data, pixel_count);
-    sendToArray(data, pixWidth, pixHeight, printThresh);
 
     if (printFull)
-        dataToPPM(data, "test1.ppm", pixWidth, pixHeight, image_size); //FIXME
+    {
+        dataToPPM(data, "test1.ppm", pixWidth, pixHeight, image_size);              //FIXME
+        dataToPGM(data, "test1.pgm", pixWidth, pixHeight, pixel_count, image_size); //FIXME
+    }
 
     free(data);
 }
@@ -572,56 +417,6 @@ void *procPic()
     pthread_exit(0);
 }
 
-void *dataCollect()
-{
-    long remainingTime = 0, startLoop = 0, stopLoop = 0;
-
-    pthread_mutex_lock(&takePicLock);
-    pthread_cond_wait(&willTakePic, &takePicLock);
-    pthread_mutex_unlock(&takePicLock);
-
-    ualarm(THREAD_PROCESS_TIME_uS, THREAD_PROCESS_TIME_uS); //set alarm
-    state.readCounts = 0;
-
-    while (true)
-    {
-        startLoop = clock() / CLOCKS_PER_MIRCO;
-        if (state.end)
-        {
-            ualarm(0, 0); //reset alarm
-            break;
-        }
-        if (state.stopCollection)
-        {                 //stop collection if s is hit
-            ualarm(0, 0); //reset alarm
-            pthread_mutex_lock(&takePicLock);
-            pthread_cond_wait(&willTakePic, &takePicLock);
-            pthread_mutex_unlock(&takePicLock);
-            state.readCounts = 0;
-            ualarm(THREAD_PROCESS_TIME_uS, THREAD_PROCESS_TIME_uS); //set alarm
-        }
-
-        fQueuePush(THREAD_PROCESS_TIME_uS * state.readCounts, &(dQueues.TIME));
-
-        pthread_mutex_lock(&writeCountsLock);
-        state.readCounts = 0;
-        pthread_mutex_unlock(&writeCountsLock);
-
-        fQueuePush((state.sd.ACCEL_XOUT.signed_value * calibration_accelerometer.scale - calibration_accelerometer.offset_x) * 9.81, &(dQueues.ACCEL_X));
-        fQueuePush((state.sd.ACCEL_YOUT.signed_value * calibration_accelerometer.scale - calibration_accelerometer.offset_y) * 9.81, &(dQueues.ACCEL_Y));
-        fQueuePush((state.sd.ACCEL_ZOUT.signed_value * calibration_accelerometer.scale - calibration_accelerometer.offset_z) * 9.81, &(dQueues.ACCEL_Z));
-
-        fQueuePush(state.sd.GYRO_XOUT.signed_value * calibration_gyroscope.scale - calibration_gyroscope.offset_x, &(dQueues.GYRO_X));
-        fQueuePush(state.sd.GYRO_YOUT.signed_value * calibration_gyroscope.scale - calibration_gyroscope.offset_y, &(dQueues.GYRO_Y));
-        fQueuePush(state.sd.GYRO_ZOUT.signed_value * calibration_gyroscope.scale - calibration_gyroscope.offset_z, &(dQueues.GYRO_Z));
-
-        stopLoop = clock() / CLOCKS_PER_MIRCO;
-        remainingTime = THREAD_PROCESS_TIME_uS - stopLoop + startLoop;
-        if (remainingTime > 0)
-            usleep(remainingTime); //sleep for remaining portion of 10ms
-    }
-    pthread_exit(0);
-}
 
 void *scheduler()
 {

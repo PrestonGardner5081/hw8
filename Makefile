@@ -6,6 +6,8 @@ SOURCES1=import_registers.c \
 		float_queue.c \
 		pwm_init.c \
 		6050Init.c \
+		malloc_image.c \
+		process.c \
 		raspicam_wrapper.cpp \
 		hw8gardner.c
  
@@ -21,7 +23,7 @@ clean:
 	rm -f $(OBJECTS2) $(TARGET1)
 
 %.o:%.c
-	gcc -o2 -c $< -o $@
+	gcc -o3 -c $< -o $@
 
 %.o:%.cpp
 	g++ -c $< -o $@

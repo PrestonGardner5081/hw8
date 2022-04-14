@@ -3,3 +3,5 @@ hw[0-9]gardner
 ghToken.txt
 /hw8test
 *.ppm
+*.pgm
+
