@@ -106,6 +106,10 @@ struct publicState
     int mode; // 0 = m0, 1 = m1, 2 = m2
     int z_count;
     int c_count;
+    int center_x;
+    int center_y;
+    int imgHeight;
+    int imgWidth;
     bool newPic;   //is there a new pic to process?
     bool printPic; //should we print pic?
     unsigned char image[IMG_RED_WIDTH][IMG_RED_HEIGHT];
@@ -121,8 +125,6 @@ struct dataQueue
     struct fQueue GYRO_Z;
     struct fQueue TIME;
 } dQueues;
-;
-;
 
 struct RGB_pixel
 {
@@ -355,6 +357,109 @@ void makeGrayscale(unsigned char *data, unsigned int pixel_count)
     }
 }
 
+void fillInLines(unsigned char **image, int width, int height)
+{
+    unsigned char threshold = 127; //12.5% brightness
+    int lineWMax = state.imgWidth / 5;
+    int lineWMin = state.imgWidth / 10;
+    int linePts[width];
+    int numPts = 0;
+
+    for (int i = 0; i < height; i++)
+    {
+        numPts = 0;
+
+        for (int j = 0; j < width; j++)
+        {
+            if (image[i][j] >= threshold)
+            {
+                linePts[numPts] = j;
+                numPts++;
+            }
+        }
+
+        for (int k = 0; k < numPts - 1; k++)
+        {
+            int dist = linePts[k + 1] - linePts[k];
+            if (dist > lineWMax && dist < lineWMin)
+            {
+                for (int p = linePts[k]; p < linePts[k + 1]; p++)
+                {
+                    image[i][p] = 255;
+                }
+            }
+        }
+    }
+}
+
+void avgAndThresh(unsigned char **image, int width, int height)
+{
+    int threshold = 90;
+    int blockSize = 4;
+    int avg = 0;
+    char val = 0;
+
+    for (int i = 0; i < height; i += blockSize)
+    {
+        avg = 0;
+        int j;
+        for (j = 0; j < width; j += blockSize)
+        {
+            for (int k = 0; k < blockSize; k++)
+            {
+                for (int p = 0; p < blockSize; p++)
+                {
+                    avg += image[i + k][j + p];
+                }
+            }
+
+            avg = avg / (blockSize * blockSize);
+
+            val = avg > threshold ? 255 : 0;
+
+            for (int k = 0; k < blockSize; k++)
+            {
+                for (int p = 0; p < blockSize; p++)
+                {
+                    image[i + k][j + p] = val;
+                }
+            }
+        }
+    }
+}
+
+void getCenterMass(unsigned char **image, int width, int height)
+{
+    int threshold = 63; //25% brightness
+    int xAvg = 0;
+    int xCount = 0;
+    int yAvg = 0;
+    int yCount = 0;
+
+    for (int i = 0; i < height; i++)
+    {
+        for (int j = 0; j < width; j++)
+        {
+            if (image[i][j] >= threshold)
+            {
+                xAvg += j;
+                yAvg += i;
+                xCount++;
+                yCount++;
+            }
+        }
+    }
+
+    if (xCount > 0)
+        state.center_x = xAvg / xCount;
+    else
+        state.center_x = 0;
+    if (yCount > 0)
+        state.center_y = yAvg / yCount;
+    else
+        state.center_y = 0;
+}
+
 void processPic(bool printFull, bool printThresh)
 {
     size_t image_size = raspicam_wrapper_getImageTypeSize(Camera, RASPICAM_WRAPPER_FORMAT_RGB);
@@ -365,6 +470,9 @@ void processPic(bool printFull, bool printThresh)
     unsigned int pixel_count = pixHeight * pixWidth;
     struct charImg cImg;
 
+    state.imgHeight = pixHeight;
+    state.imgWidth = pixWidth;
+
     makeGrayscale(data, pixel_count);
 
     if (printFull)
@@ -373,13 +481,38 @@ void processPic(bool printFull, bool printThresh)
         dataToPGM(data, "test1.pgm", pixWidth, pixHeight, pixel_count, image_size); //FIXME
         unsigned char pgmData[pixel_count];
         dataToPGMFormat(data, pgmData, pixWidth, pixHeight, pixel_count);
-        cImg = edge_image(1, pgmData, "edge3.pgm", pixWidth, pixHeight, 1);
+
+        cImg = edge_image(1, pgmData, "edge1.pgm", pixWidth, pixHeight, 1);
+        avgAndThresh(cImg.image, pixWidth, pixHeight);
+        fillInLines(cImg.image, pixWidth, pixHeight);
+
+        unsigned char data2[pixel_count];
+        for (int i = 0; i < pixHeight; i++)
+        {
+            for (int j = 0; j < pixWidth; j++)
+            {
+                data2[pixWidth * i + j] = cImg.image[i][j];
+            }
+        }
+
+        FILE *outFile = fopen("lines2.pgm", "wb");
+        if (outFile != NULL)
+        {
+            fprintf(outFile, "P5\n"); // write .pgm file header
+            fprintf(outFile, "%d %d 255\n", pixWidth, pixHeight);
+            // write the image data
+            fwrite(data2, 1, image_size / 3, outFile);
+            fclose(outFile);
+            printf("Image, picture saved as %s\n", "lines2.pgm");
+        }
     }
     else
     {
         unsigned char pgmData[pixel_count];
         dataToPGMFormat(data, pgmData, pixWidth, pixHeight, pixel_count);
         cImg = edge_image(0, pgmData, "edge.pgm", pixWidth, pixHeight, 1);
+        // fillInLines(cImg.image, pixWidth, pixHeight);
+        // getCenterMass(cImg.image, pixWidth, pixHeight);
     }
 
     free(data);
@@ -416,12 +549,15 @@ void *procPic()
         {
             state.newPic = false;
 
-            pthread_mutex_lock(&printLock);
-            bool print = state.printPic;
-            processPic(print, print);
-            state.printPic = false;
-            pthread_mutex_unlock(&printLock);
-            // printf("hey");//FIXME
+            if (state.printPic)
+            {
+                pthread_mutex_lock(&printLock);
+                state.printPic = false;
+                pthread_mutex_unlock(&printLock);
+                processPic(true, true);
+            }
+            else
+                processPic(false, false);
         }
 
         stopLoop = clock() / CLOCKS_PER_MIRCO;
@@ -572,94 +708,47 @@ void *scheduler()
                 queuePush('s', &state.leftQueue);
                 pthread_mutex_unlock(&leftControlLock);
             }
-            else if (command == 'w')
-            { //FIXME
-                state.stopCollection = false;
-                pthread_cond_broadcast(&willTakePic);
-            }
             else if (command == 'p')
             {
                 pthread_mutex_lock(&printLock);
                 state.printPic = true;
                 pthread_mutex_unlock(&printLock);
             }
-            // else if (command == 'w' && state.leftDirection != 'w' && state.rightDirection != 'w')
-            // {
-            //     // calibrate_accelerometer_and_gyroscope(&calibration_accelerometer, &calibration_gyroscope, io->bsc);
-            //     m2IsDriving = true;
-            //     pthread_cond_broadcast(&willTakePic);
+            else if (false) //if (command == 'w' || m2IsDriving) //FIXME
+            {
+                m2IsDriving = true;
+                state.stopCollection = false;
+                pthread_cond_broadcast(&willTakePic);
 
-            //     GPIO_SET(io->gpio, 5); //set to forward
-            //     GPIO_CLR(io->gpio, 6);
-            //     GPIO_SET(io->gpio, 22); //set to forward
-            //     GPIO_CLR(io->gpio, 23);
-            //     state.leftDirection = 'w';
-            //     state.rightDirection = 'w';
+                int rSpd;
+                int lSpd;
+                float xPerc = (float)abs(state.center_x) / ((float)state.imgWidth); //percentage of img
+                float yPerc = (float)abs(state.center_y) / ((float)state.imgHeight);
 
-            //     setSpdLeft(PWM_MIN + PWM_5_PERC);
-            //     setSpdRight(PWM_MIN + PWM_5_PERC);
-            // }
+                io->pwm->DAT1 = 0;
+                io->pwm->DAT2 = 0;
+                GPIO_SET(io->gpio, 5); //set to forward
+                GPIO_CLR(io->gpio, 6);
+                GPIO_SET(io->gpio, 22); //set to forward
+                GPIO_CLR(io->gpio, 23);
 
-            // if (m2IsDriving)
-            // {
+                rSpd = (yPerc * ((PWM_RANGE - PWM_5_PERC * 2) / 2)) + PWM_MIN + PWM_5_PERC * 2;
+                lSpd = (yPerc * ((PWM_RANGE - PWM_5_PERC * 2) / 2)) + PWM_MIN + PWM_5_PERC * 2;
 
-            //     irRightVal = GPIO_READ(io->gpio, 25);
-            //     irLeftVal = GPIO_READ(io->gpio, 24);
-            //     // printf("right %d\n", irRightVal);
-            //     // printf("left %d\n", irLeftVal);
+                if (xPerc < 0.5)
+                {
+                    rSpd += xPerc * (PWM_RANGE * 3 / 4);
+                    lSpd -= xPerc * (PWM_RANGE * 3 / 4);
+                }
+                else
+                {
+                    lSpd += xPerc * (PWM_RANGE);
+                    rSpd -= xPerc * (PWM_RANGE);
+                }
 
-            //     stopTurn = clock() / CLOCKS_PER_MIRCO;
-
-            //     if (stopTurn - startTurn > CHECK_IR_INT)
-            //     {
-            //         if (irRightVal != 0 && state.c_count < 5)
-            //         {
-            //             if (state.z_count > 0) //is currently turning right, reset and turn left
-            //             {
-            //                 pthread_mutex_lock(&rightControlLock);
-            //                 pthread_mutex_lock(&leftControlLock);
-            //                 clearQueue(&state.rightQueue);
-            //                 clearQueue(&state.leftQueue);
-            //                 pthread_mutex_unlock(&rightControlLock);
-            //                 pthread_mutex_unlock(&leftControlLock);
-            //                 state.z_count = 0;
-            //             }
-            //             pthread_mutex_lock(&rightControlLock);
-            //             queuePush('c', &state.rightQueue);
-            //             pthread_mutex_unlock(&rightControlLock);
-            //             pthread_mutex_lock(&leftControlLock);
-            //             queuePush('c', &state.leftQueue);
-            //             pthread_mutex_unlock(&leftControlLock);
-            //             startTurn = clock() / CLOCKS_PER_MIRCO;
-            //             // printf("right %d\n", irRightVal);
-            //             // printf("left %d\n", irLeftVal);
-            //             state.c_count += 1;
-            //         }
-            //         if (irLeftVal != 0 && state.z_count < 5)
-            //         {
-            //             if (state.c_count > 0) //is currently turning right, reset and turn left
-            //             {
-            //                 pthread_mutex_lock(&rightControlLock);
-            //                 pthread_mutex_lock(&leftControlLock);
-            //                 clearQueue(&state.rightQueue);
-            //                 clearQueue(&state.leftQueue);
-            //                 pthread_mutex_unlock(&rightControlLock);
-            //                 pthread_mutex_unlock(&leftControlLock);
-            //                 state.c_count = 0;
-            //             }
-            //             pthread_mutex_lock(&rightControlLock);
-            //             queuePush('z', &state.rightQueue);
-            //             pthread_mutex_unlock(&rightControlLock);
-            //             pthread_mutex_lock(&leftControlLock);
-            //             queuePush('z', &state.leftQueue);
-            //             pthread_mutex_unlock(&leftControlLock);
-            //             startTurn = clock() / CLOCKS_PER_MIRCO;
-            //             // printf("right %d\n", irRightVal);
-            //             // printf("left %d\n", irLeftVal);
-            //             state.z_count += 1;
-            //         }
-            //     }
-            // }
+                io->pwm->DAT1 = leftLookup[lSpd];
+                io->pwm->DAT2 = rSpd;
+            }
         }
 
         stopLoop = clock() / CLOCKS_PER_MIRCO;

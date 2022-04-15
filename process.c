@@ -32,7 +32,7 @@ struct charImg edge_image(int pgmfile, unsigned char *input_data, char *file_out
   int **second;
 
   int temp;            // Holds current convoluted value
-  int threshold = 127; // Darker images will require lower thresholds
+  int threshold = 200; // Darker images will require lower thresholds
 
   /* if correct PGM file format  then get height and width */
 
