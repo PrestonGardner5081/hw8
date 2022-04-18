@@ -694,6 +694,8 @@ void *scheduler()
 
         if (state.mode == 2)
         {
+            bool printDebug;
+
             if (command == 's')
             {
                 m2IsDriving = false;
@@ -713,17 +715,16 @@ void *scheduler()
                 pthread_mutex_lock(&printLock);
                 state.printPic = true;
                 pthread_mutex_unlock(&printLock);
+                printDebug = true;
             }
-            else if (false) //if (command == 'w' || m2IsDriving) //FIXME
+            else if (command == 'w' || m2IsDriving) //FIXME
             {
-                m2IsDriving = true;
-                state.stopCollection = false;
-                pthread_cond_broadcast(&willTakePic);
-
-                int rSpd;
-                int lSpd;
-                float xPerc = (float)abs(state.center_x) / ((float)state.imgWidth); //percentage of img
-                float yPerc = (float)abs(state.center_y) / ((float)state.imgHeight);
+                if (!m2IsDriving)
+                {
+                    pthread_cond_broadcast(&willTakePic);
+                    m2IsDriving = true;
+                    bool printDebug = false;
+                }
 
                 io->pwm->DAT1 = 0;
                 io->pwm->DAT2 = 0;
@@ -732,22 +733,36 @@ void *scheduler()
                 GPIO_SET(io->gpio, 22); //set to forward
                 GPIO_CLR(io->gpio, 23);
 
-                rSpd = (yPerc * ((PWM_RANGE - PWM_5_PERC * 2) / 2)) + PWM_MIN + PWM_5_PERC * 2;
-                lSpd = (yPerc * ((PWM_RANGE - PWM_5_PERC * 2) / 2)) + PWM_MIN + PWM_5_PERC * 2;
+                state.stopCollection = false;
 
-                if (xPerc < 0.5)
+                int rSpd;
+                int lSpd;
+                float xPerc = (float)abs(state.center_x) / ((float)state.imgWidth); //percentage of img
+                float yPerc = (float)abs(state.center_y) / ((float)state.imgHeight);
+
+                rSpd = ((yPerc - 0.4) * ((PWM_RANGE - PWM_5_PERC * 2) / 2)) + PWM_MIN + PWM_5_PERC;
+                lSpd = ((yPerc - 0.4) * ((PWM_RANGE - PWM_5_PERC * 2) / 2)) + PWM_MIN + PWM_5_PERC;
+
+                if (xPerc > 0.5)
                 {
-                    rSpd += xPerc * (PWM_RANGE * 3 / 4);
-                    lSpd -= xPerc * (PWM_RANGE * 3 / 4);
+                    lSpd -= (xPerc - 0.2) * (PWM_RANGE / 2);
+                    rSpd += (xPerc - 0.2) * (PWM_RANGE / 2);
                 }
                 else
                 {
-                    lSpd += xPerc * (PWM_RANGE);
-                    rSpd -= xPerc * (PWM_RANGE);
+                    lSpd += (xPerc - 0.2) * (PWM_RANGE / 2);
+                    rSpd -= (xPerc - 0.2) * (PWM_RANGE / 2);
                 }
 
-                io->pwm->DAT1 = leftLookup[lSpd];
-                io->pwm->DAT2 = rSpd;
+                io->pwm->DAT1 = rSpd;
+                io->pwm->DAT2 = lSpd;
+
+                if (printDebug)
+                {
+                    printf("x_perc: %f, y_perc: %f\n", xPerc, yPerc);
+                    printf("r_spd: %d, l_spd: %d", rSpd, lSpd);
+                    printDebug = false;
+                }
             }
         }
 
