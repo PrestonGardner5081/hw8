@@ -205,7 +205,7 @@ int setSpdLeft(int spd)
 
     if (spd > state.left_lvl)
     {
-        if (spd >= PWM_MAX)
+        if (spd >= RIGHT_MAX)
             spd = RIGHT_MAX;
 
         if (state.left_lvl < PWM_MIN)
@@ -214,7 +214,7 @@ int setSpdLeft(int spd)
         while (state.left_lvl < spd)
         {
             state.left_lvl += PWM_5_PERC;
-            io->pwm->DAT1 = leftLookup[state.left_lvl]; //PWMA left
+            io->pwm->DAT1 = state.left_lvl; //PWMA right
             usleep(RAMP_TIME);
             time_taken += RAMP_TIME;
         }
@@ -227,11 +227,9 @@ int setSpdLeft(int spd)
         while (state.left_lvl > spd)
         {
             state.left_lvl -= PWM_5_PERC;
-
             if (state.left_lvl < 0)
                 state.left_lvl = 0;
-
-            io->pwm->DAT1 = leftLookup[state.left_lvl]; //PWMA left
+            io->pwm->DAT1 = state.left_lvl; //PWMA right
             usleep(RAMP_TIME);
             time_taken += RAMP_TIME;
         }
@@ -249,7 +247,7 @@ int setSpdRight(int spd)
 
     if (spd > state.right_lvl)
     {
-        if (spd >= RIGHT_MAX)
+        if (spd >= PWM_MAX)
             spd = RIGHT_MAX;
 
         if (state.right_lvl < PWM_MIN)
@@ -258,7 +256,7 @@ int setSpdRight(int spd)
         while (state.right_lvl < spd)
         {
             state.right_lvl += PWM_5_PERC;
-            io->pwm->DAT2 = state.right_lvl; //PWMA right
+            io->pwm->DAT2 = leftLookup[state.right_lvl]; //PWMA left
             usleep(RAMP_TIME);
             time_taken += RAMP_TIME;
         }
@@ -271,9 +269,11 @@ int setSpdRight(int spd)
         while (state.right_lvl > spd)
         {
             state.right_lvl -= PWM_5_PERC;
+
             if (state.right_lvl < 0)
                 state.right_lvl = 0;
-            io->pwm->DAT2 = state.right_lvl; //PWMA right
+
+            io->pwm->DAT2 = leftLookup[state.right_lvl]; //PWMA left
             usleep(RAMP_TIME);
             time_taken += RAMP_TIME;
         }
@@ -773,9 +773,9 @@ void *leftCtrl()
             break;
         }
 
-        pthread_mutex_lock(&leftControlLock);
+        pthread_mutex_lock(&rightControlLock);
         nextCommand = queuePop(&state.leftQueue);
-        pthread_mutex_unlock(&leftControlLock);
+        pthread_mutex_unlock(&rightControlLock);
 
         if (nextCommand == 'i')
         {
@@ -787,7 +787,7 @@ void *leftCtrl()
                 state.left_lvl += PWM_5_PERC;
 
             pthread_mutex_lock(&pwmLock);
-            io->pwm->DAT1 = leftLookup[state.left_lvl]; //PWMB left
+            io->pwm->DAT1 = state.left_lvl; //PWMB right
             pthread_mutex_unlock(&pwmLock);
         }
         else if (nextCommand == 'j')
@@ -798,7 +798,7 @@ void *leftCtrl()
                 state.left_lvl -= PWM_5_PERC;
 
             pthread_mutex_lock(&pwmLock);
-            io->pwm->DAT1 = leftLookup[state.left_lvl]; //PWMB left
+            io->pwm->DAT1 = state.left_lvl; //PWMB right
             pthread_mutex_unlock(&pwmLock);
         }
         else if (nextCommand == 'w')
@@ -806,40 +806,40 @@ void *leftCtrl()
             int tmpLvl = state.left_lvl;
             if (state.leftDirection == 's')
             {
-                GPIO_SET(io->gpio, 5); //set to forward
-                GPIO_CLR(io->gpio, 6);
+                GPIO_SET(io->gpio, 22); //set to forward
+                GPIO_CLR(io->gpio, 23);
 
                 state.left_lvl = tmpLvl / 2;
-                io->pwm->DAT1 = state.left_lvl; //PWMB left
+                io->pwm->DAT1 = state.left_lvl; //PWMB right
                 usleep(100000);                 // sleep .1 s
                 state.left_lvl = tmpLvl;
-                io->pwm->DAT1 = state.left_lvl; //PWMB left
+                io->pwm->DAT1 = state.left_lvl; //PWMB right
             }
             if (state.leftDirection == 'x')
             {
                 state.left_lvl = state.left_lvl / 2;
                 io->pwm->DAT1 = state.left_lvl;
-                ;               //PWMB left
+                ;               //PWMB right
                 usleep(100000); // sleep .1 s
 
                 state.left_lvl = 0;             //stop
-                io->pwm->DAT1 = state.left_lvl; //PWMB left
+                io->pwm->DAT1 = state.left_lvl; //PWMB right
                 usleep(100000);                 //sleep .1s
 
-                GPIO_SET(io->gpio, 5); //set to forward
-                GPIO_CLR(io->gpio, 6);
+                GPIO_SET(io->gpio, 22); //set to forward
+                GPIO_CLR(io->gpio, 23);
 
                 state.left_lvl = tmpLvl / 2;    // half speed
-                io->pwm->DAT1 = state.left_lvl; //PWMB left
+                io->pwm->DAT1 = state.left_lvl; //PWMB right
                 usleep(100000);                 //sleep .1s
                 state.left_lvl = tmpLvl;        // half speed
                 io->pwm->DAT1 = state.left_lvl;
-                ; //PWMB left
+                ; //PWMB right
             }
             else
             {
-                GPIO_SET(io->gpio, 5); //set to forward
-                GPIO_CLR(io->gpio, 6);
+                GPIO_SET(io->gpio, 22); //set to forward
+                GPIO_CLR(io->gpio, 23);
             }
             state.leftDirection = 'w';
         }
@@ -848,85 +848,85 @@ void *leftCtrl()
             int tmpLvl = state.left_lvl;
             if (state.leftDirection == 's')
             {
-                GPIO_SET(io->gpio, 6); //set to reverse
-                GPIO_CLR(io->gpio, 5);
+                GPIO_SET(io->gpio, 23); //set to reverse
+                GPIO_CLR(io->gpio, 22);
 
                 state.left_lvl = state.left_lvl / 2;
                 io->pwm->DAT1 = state.left_lvl;
-                ;               //PWMB left
+                ;               //PWMB right
                 usleep(100000); // sleep .1 s
                 state.left_lvl = tmpLvl;
                 io->pwm->DAT1 = state.left_lvl;
-                ; //PWMB left
+                ; //PWMB right
             }
             if (state.leftDirection == 'w')
             {
                 state.left_lvl = state.left_lvl / 2;
-                io->pwm->DAT1 = state.left_lvl; //PWMB left
+                io->pwm->DAT1 = state.left_lvl; //PWMB right
                 usleep(100000);                 // sleep .1 s
 
                 state.left_lvl = 0;             //stop
-                io->pwm->DAT1 = state.left_lvl; //PWMB left
+                io->pwm->DAT1 = state.left_lvl; //PWMB right
                 usleep(100000);                 //sleep .1s
 
-                GPIO_SET(io->gpio, 6); //set to reverse
-                GPIO_CLR(io->gpio, 5);
+                GPIO_SET(io->gpio, 23); //set to reverse
+                GPIO_CLR(io->gpio, 22);
 
                 state.left_lvl = tmpLvl / 2;    // half speed
-                io->pwm->DAT1 = state.left_lvl; //PWMB left
+                io->pwm->DAT1 = state.left_lvl; //PWMB right
                 usleep(100000);                 //sleep .1s
                 state.left_lvl = tmpLvl;        // half speed
-                io->pwm->DAT1 = state.left_lvl; //PWMB left
+                io->pwm->DAT1 = state.left_lvl; //PWMB right
             }
             else
             {
-                GPIO_SET(io->gpio, 6); //set to reverse
-                GPIO_CLR(io->gpio, 5);
+                GPIO_SET(io->gpio, 23); //set to reverse
+                GPIO_CLR(io->gpio, 22);
             }
             state.leftDirection = 'x';
         }
         else if (nextCommand == 's')
         {
             state.left_lvl = state.left_lvl / 2;
-            io->pwm->DAT1 = state.left_lvl; //PWMB left
+            io->pwm->DAT1 = state.left_lvl; //PWMB right
             usleep(100000);                 // sleep .1 s
             state.left_lvl = 0;             // stop
-            io->pwm->DAT1 = state.left_lvl;
-            ; //PWMB left
+            io->pwm->DAT1 = state.left_lvl; //PWMB right
 
-            GPIO_CLR(io->gpio, 6); //set to stop
-            GPIO_CLR(io->gpio, 5);
+            GPIO_CLR(io->gpio, 23); //set to stop
+            GPIO_CLR(io->gpio, 22);
             state.leftDirection = 's';
         }
-        else if (nextCommand == 'z')
+        else if (nextCommand == 'c')
         {
             if (state.leftDirection == 's')
             {
-                GPIO_SET(io->gpio, 5); //set to forward
-                GPIO_CLR(io->gpio, 6);
+                GPIO_SET(io->gpio, 22); //set to forward
+                GPIO_CLR(io->gpio, 23);
             }
             int tmpLvl = state.left_lvl;
 
             setSpdLeft(0);
-            usleep(Z_C_TURN_TIME);
-            setSpdLeft(tmpLvl);
 
-            if (state.rightDirection == 's')
-            {
-                GPIO_CLR(io->gpio, 5); //set to stop
-                GPIO_CLR(io->gpio, 6);
-            }
-            if (state.z_count > 0)
-                state.z_count -= 1;
-        }
-        else if (nextCommand == 'c')
-        {
-            int turn_time = Z_C_TURN_TIME;
+            usleep(Z_C_TURN_TIME);
+
+            setSpdLeft(tmpLvl);
 
             if (state.leftDirection == 's')
             {
-                GPIO_SET(io->gpio, 5); //set to forward
-                GPIO_CLR(io->gpio, 6);
+                GPIO_CLR(io->gpio, 22); //set to stop
+                GPIO_CLR(io->gpio, 23);
+            }
+            if (state.c_count > 0)
+                state.c_count -= 1;
+        }
+        else if (nextCommand == 'z')
+        {
+            int turn_time = Z_C_TURN_TIME;
+            if (state.leftDirection == 's')
+            {
+                GPIO_SET(io->gpio, 22); //set to forward
+                GPIO_CLR(io->gpio, 23);
             }
             int tmpLvl = state.left_lvl;
 
@@ -935,50 +935,51 @@ void *leftCtrl()
             usleep(turn_time);
 
             setSpdLeft(tmpLvl);
+
             if (state.leftDirection == 's')
             {
-                GPIO_CLR(io->gpio, 5); //set to stop
-                GPIO_CLR(io->gpio, 6);
+                GPIO_CLR(io->gpio, 22); //set to stop
+                GPIO_CLR(io->gpio, 23);
             }
-            if (state.c_count > 0)
-                state.c_count -= 1;
-        }
-        else if (nextCommand == 'a')
-        {
-            if (state.leftDirection == 's')
-            {
-                GPIO_SET(io->gpio, 5); //set to forward
-                GPIO_CLR(io->gpio, 6);
-            }
-            int tmpLvl = state.left_lvl;
-            state.left_lvl = leftLookup[PWM_MIN];
-            io->pwm->DAT1 = state.left_lvl; //PWMB right
-            usleep(TURN_TIME);
-            state.left_lvl = tmpLvl;
-            io->pwm->DAT1 = state.left_lvl; //PWMB right
-            if (state.rightDirection == 's')
-            {
-                GPIO_CLR(io->gpio, 5); //set to stop
-                GPIO_CLR(io->gpio, 6);
-            }
+            if (state.z_count > 0)
+                state.z_count -= 1;
         }
         else if (nextCommand == 'd')
         {
             if (state.leftDirection == 's')
             {
-                GPIO_SET(io->gpio, 5); //set to forward
-                GPIO_CLR(io->gpio, 6);
+                GPIO_SET(io->gpio, 22); //set to forward
+                GPIO_CLR(io->gpio, 23);
             }
             int tmpLvl = state.left_lvl;
-            state.left_lvl = PWM_MAX;       //adfsaf
+            state.left_lvl = PWM_MIN + 3 * PWM_5_PERC;
             io->pwm->DAT1 = state.left_lvl; //PWMB right
             usleep(TURN_TIME);
             state.left_lvl = tmpLvl;
             io->pwm->DAT1 = state.left_lvl; //PWMB right
             if (state.leftDirection == 's')
             {
-                GPIO_CLR(io->gpio, 5); //set to stop
-                GPIO_CLR(io->gpio, 6);
+                GPIO_CLR(io->gpio, 22); //set to stop
+                GPIO_CLR(io->gpio, 23);
+            }
+        }
+        else if (nextCommand == 'a')
+        {
+            if (state.leftDirection == 's')
+            {
+                GPIO_SET(io->gpio, 22); //set to forward
+                GPIO_CLR(io->gpio, 23);
+            }
+            int tmpLvl = state.left_lvl;
+            state.left_lvl = RIGHT_MAX;
+            io->pwm->DAT1 = state.left_lvl; //PWMB right
+            usleep(TURN_TIME);
+            state.left_lvl = tmpLvl;
+            io->pwm->DAT1 = state.left_lvl; //PWMB right
+            if (state.leftDirection == 's')
+            {
+                GPIO_CLR(io->gpio, 22); //set to stop
+                GPIO_CLR(io->gpio, 23);
             }
         }
 
@@ -987,6 +988,7 @@ void *leftCtrl()
         if (remainingTime > 0)
             usleep(remainingTime); //sleep for remaining portion of 10ms
     }
+
     pthread_exit(0);
 }
 
@@ -1003,9 +1005,9 @@ void *rightCtrl()
             break;
         }
 
-        pthread_mutex_lock(&rightControlLock);
+        pthread_mutex_lock(&leftControlLock);
         nextCommand = queuePop(&state.rightQueue);
-        pthread_mutex_unlock(&rightControlLock);
+        pthread_mutex_unlock(&leftControlLock);
 
         if (nextCommand == 'i')
         {
@@ -1017,7 +1019,7 @@ void *rightCtrl()
                 state.right_lvl += PWM_5_PERC;
 
             pthread_mutex_lock(&pwmLock);
-            io->pwm->DAT2 = state.right_lvl; //PWMB right
+            io->pwm->DAT2 = leftLookup[state.right_lvl]; //PWMB left
             pthread_mutex_unlock(&pwmLock);
         }
         else if (nextCommand == 'j')
@@ -1028,7 +1030,7 @@ void *rightCtrl()
                 state.right_lvl -= PWM_5_PERC;
 
             pthread_mutex_lock(&pwmLock);
-            io->pwm->DAT2 = state.right_lvl; //PWMB right
+            io->pwm->DAT2 = leftLookup[state.right_lvl]; //PWMB left
             pthread_mutex_unlock(&pwmLock);
         }
         else if (nextCommand == 'w')
@@ -1036,40 +1038,40 @@ void *rightCtrl()
             int tmpLvl = state.right_lvl;
             if (state.rightDirection == 's')
             {
-                GPIO_SET(io->gpio, 22); //set to forward
-                GPIO_CLR(io->gpio, 23);
+                GPIO_SET(io->gpio, 5); //set to forward
+                GPIO_CLR(io->gpio, 6);
 
                 state.right_lvl = tmpLvl / 2;
-                io->pwm->DAT1 = state.right_lvl; //PWMB right
+                io->pwm->DAT2 = state.right_lvl; //PWMB left
                 usleep(100000);                  // sleep .1 s
                 state.right_lvl = tmpLvl;
-                io->pwm->DAT1 = state.right_lvl; //PWMB right
+                io->pwm->DAT2 = state.right_lvl; //PWMB left
             }
             if (state.rightDirection == 'x')
             {
                 state.right_lvl = state.right_lvl / 2;
-                io->pwm->DAT1 = state.right_lvl;
-                ;               //PWMB right
+                io->pwm->DAT2 = state.right_lvl;
+                ;               //PWMB left
                 usleep(100000); // sleep .1 s
 
                 state.right_lvl = 0;             //stop
-                io->pwm->DAT1 = state.right_lvl; //PWMB right
+                io->pwm->DAT2 = state.right_lvl; //PWMB left
                 usleep(100000);                  //sleep .1s
 
-                GPIO_SET(io->gpio, 22); //set to forward
-                GPIO_CLR(io->gpio, 23);
+                GPIO_SET(io->gpio, 5); //set to forward
+                GPIO_CLR(io->gpio, 6);
 
                 state.right_lvl = tmpLvl / 2;    // half speed
-                io->pwm->DAT1 = state.right_lvl; //PWMB right
+                io->pwm->DAT2 = state.right_lvl; //PWMB left
                 usleep(100000);                  //sleep .1s
                 state.right_lvl = tmpLvl;        // half speed
-                io->pwm->DAT1 = state.right_lvl;
-                ; //PWMB right
+                io->pwm->DAT2 = state.right_lvl;
+                ; //PWMB left
             }
             else
             {
-                GPIO_SET(io->gpio, 22); //set to forward
-                GPIO_CLR(io->gpio, 23);
+                GPIO_SET(io->gpio, 5); //set to forward
+                GPIO_CLR(io->gpio, 6);
             }
             state.rightDirection = 'w';
         }
@@ -1078,85 +1080,85 @@ void *rightCtrl()
             int tmpLvl = state.right_lvl;
             if (state.rightDirection == 's')
             {
-                GPIO_SET(io->gpio, 23); //set to reverse
-                GPIO_CLR(io->gpio, 22);
+                GPIO_SET(io->gpio, 6); //set to reverse
+                GPIO_CLR(io->gpio, 5);
 
                 state.right_lvl = state.right_lvl / 2;
-                io->pwm->DAT1 = state.right_lvl;
-                ;               //PWMB right
+                io->pwm->DAT2 = state.right_lvl;
+                ;               //PWMB left
                 usleep(100000); // sleep .1 s
                 state.right_lvl = tmpLvl;
-                io->pwm->DAT1 = state.right_lvl;
-                ; //PWMB right
+                io->pwm->DAT2 = state.right_lvl;
+                ; //PWMB left
             }
             if (state.rightDirection == 'w')
             {
                 state.right_lvl = state.right_lvl / 2;
-                io->pwm->DAT1 = state.right_lvl; //PWMB right
+                io->pwm->DAT2 = state.right_lvl; //PWMB left
                 usleep(100000);                  // sleep .1 s
 
                 state.right_lvl = 0;             //stop
-                io->pwm->DAT1 = state.right_lvl; //PWMB right
+                io->pwm->DAT2 = state.right_lvl; //PWMB left
                 usleep(100000);                  //sleep .1s
 
-                GPIO_SET(io->gpio, 23); //set to reverse
-                GPIO_CLR(io->gpio, 22);
+                GPIO_SET(io->gpio, 6); //set to reverse
+                GPIO_CLR(io->gpio, 5);
 
                 state.right_lvl = tmpLvl / 2;    // half speed
-                io->pwm->DAT1 = state.right_lvl; //PWMB right
+                io->pwm->DAT2 = state.right_lvl; //PWMB left
                 usleep(100000);                  //sleep .1s
                 state.right_lvl = tmpLvl;        // half speed
-                io->pwm->DAT1 = state.right_lvl; //PWMB right
+                io->pwm->DAT2 = state.right_lvl; //PWMB left
             }
             else
             {
-                GPIO_SET(io->gpio, 23); //set to reverse
-                GPIO_CLR(io->gpio, 22);
+                GPIO_SET(io->gpio, 6); //set to reverse
+                GPIO_CLR(io->gpio, 5);
             }
             state.rightDirection = 'x';
         }
         else if (nextCommand == 's')
         {
             state.right_lvl = state.right_lvl / 2;
-            io->pwm->DAT2 = state.right_lvl; //PWMB right
+            io->pwm->DAT2 = state.right_lvl; //PWMB left
             usleep(100000);                  // sleep .1 s
             state.right_lvl = 0;             // stop
-            io->pwm->DAT2 = state.right_lvl; //PWMB right
+            io->pwm->DAT2 = state.right_lvl;
+            ; //PWMB left
 
-            GPIO_CLR(io->gpio, 23); //set to stop
-            GPIO_CLR(io->gpio, 22);
+            GPIO_CLR(io->gpio, 6); //set to stop
+            GPIO_CLR(io->gpio, 5);
             state.rightDirection = 's';
         }
-        else if (nextCommand == 'c')
+        else if (nextCommand == 'z')
         {
             if (state.rightDirection == 's')
             {
-                GPIO_SET(io->gpio, 22); //set to forward
-                GPIO_CLR(io->gpio, 23);
+                GPIO_SET(io->gpio, 5); //set to forward
+                GPIO_CLR(io->gpio, 6);
             }
             int tmpLvl = state.right_lvl;
 
             setSpdRight(0);
-
             usleep(Z_C_TURN_TIME);
-
             setSpdRight(tmpLvl);
 
             if (state.rightDirection == 's')
             {
-                GPIO_CLR(io->gpio, 22); //set to stop
-                GPIO_CLR(io->gpio, 23);
+                GPIO_CLR(io->gpio, 5); //set to stop
+                GPIO_CLR(io->gpio, 6);
             }
-            if (state.c_count > 0)
-                state.c_count -= 1;
+            if (state.z_count > 0)
+                state.z_count -= 1;
         }
-        else if (nextCommand == 'z')
+        else if (nextCommand == 'c')
         {
             int turn_time = Z_C_TURN_TIME;
+
             if (state.rightDirection == 's')
             {
-                GPIO_SET(io->gpio, 22); //set to forward
-                GPIO_CLR(io->gpio, 23);
+                GPIO_SET(io->gpio, 5); //set to forward
+                GPIO_CLR(io->gpio, 6);
             }
             int tmpLvl = state.right_lvl;
 
@@ -1165,51 +1167,50 @@ void *rightCtrl()
             usleep(turn_time);
 
             setSpdRight(tmpLvl);
-
             if (state.rightDirection == 's')
             {
-                GPIO_CLR(io->gpio, 22); //set to stop
-                GPIO_CLR(io->gpio, 23);
+                GPIO_CLR(io->gpio, 5); //set to stop
+                GPIO_CLR(io->gpio, 6);
             }
-            if (state.z_count > 0)
-                state.z_count -= 1;
-        }
-        else if (nextCommand == 'd')
-        {
-            if (state.rightDirection == 's')
-            {
-                GPIO_SET(io->gpio, 22); //set to forward
-                GPIO_CLR(io->gpio, 23);
-            }
-            int tmpLvl = state.right_lvl;
-            state.right_lvl = PWM_MIN + 3 * PWM_5_PERC;
-            io->pwm->DAT2 = state.right_lvl; //PWMB right
-            usleep(TURN_TIME);
-            state.right_lvl = tmpLvl;
-            io->pwm->DAT2 = state.right_lvl; //PWMB right
-            if (state.rightDirection == 's')
-            {
-                GPIO_CLR(io->gpio, 22); //set to stop
-                GPIO_CLR(io->gpio, 23);
-            }
+            if (state.c_count > 0)
+                state.c_count -= 1;
         }
         else if (nextCommand == 'a')
         {
             if (state.rightDirection == 's')
             {
-                GPIO_SET(io->gpio, 22); //set to forward
-                GPIO_CLR(io->gpio, 23);
+                GPIO_SET(io->gpio, 5); //set to forward
+                GPIO_CLR(io->gpio, 6);
             }
             int tmpLvl = state.right_lvl;
-            state.right_lvl = RIGHT_MAX;
+            state.right_lvl = leftLookup[PWM_MIN];
             io->pwm->DAT2 = state.right_lvl; //PWMB right
             usleep(TURN_TIME);
             state.right_lvl = tmpLvl;
             io->pwm->DAT2 = state.right_lvl; //PWMB right
             if (state.rightDirection == 's')
             {
-                GPIO_CLR(io->gpio, 22); //set to stop
-                GPIO_CLR(io->gpio, 23);
+                GPIO_CLR(io->gpio, 5); //set to stop
+                GPIO_CLR(io->gpio, 6);
+            }
+        }
+        else if (nextCommand == 'd')
+        {
+            if (state.rightDirection == 's')
+            {
+                GPIO_SET(io->gpio, 5); //set to forward
+                GPIO_CLR(io->gpio, 6);
+            }
+            int tmpLvl = state.right_lvl;
+            state.right_lvl = PWM_MAX;       //adfsaf
+            io->pwm->DAT2 = state.right_lvl; //PWMB right
+            usleep(TURN_TIME);
+            state.right_lvl = tmpLvl;
+            io->pwm->DAT2 = state.right_lvl; //PWMB right
+            if (state.rightDirection == 's')
+            {
+                GPIO_CLR(io->gpio, 5); //set to stop
+                GPIO_CLR(io->gpio, 6);
             }
         }
 
@@ -1218,7 +1219,6 @@ void *rightCtrl()
         if (remainingTime > 0)
             usleep(remainingTime); //sleep for remaining portion of 10ms
     }
-
     pthread_exit(0);
 }
 
